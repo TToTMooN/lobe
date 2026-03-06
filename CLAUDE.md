@@ -90,7 +90,7 @@ uv run python scripts/serve_policy.py \
 
 ## Development Conventions
 
-- **Package manager**: `uv` (not pip). Run everything with `uv run`.
+- **Package manager**: `uv` (not pip). Run everything with `uv run --index-strategy unsafe-best-match` (needed for PyTorch nightly index).
 - **Python**: 3.11 exactly
 - **Logging**: `loguru` everywhere — `from loguru import logger`. Never use `print()` or `logging`.
 - **Linter**: `ruff` (line length 119, config in pyproject.toml)

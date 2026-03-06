@@ -1,15 +1,18 @@
 """Benchmark: Flow Matching vs Diffusion Policy on PushT.
 
 Downloads the PushT dataset, trains both policies with identical hyperparameters,
-and compares loss curves + inference speed.
+and compares loss curves + inference speed. Logs to wandb if enabled.
 
 Usage:
     uv run python scripts/benchmark_pusht.py --policy flow_matching --steps 5000
     uv run python scripts/benchmark_pusht.py --policy diffusion --steps 5000
+    uv run python scripts/benchmark_pusht.py --policy flow_matching --steps 5000 --wandb
 """
 
+import json
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import torch
 import tyro
@@ -21,6 +24,7 @@ from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from loguru import logger
 from torch.utils.data import DataLoader
 
+import lobe.video_compat  # noqa: F401 — patch video decoding for torch nightly
 from lobe.policies.flow_matching.configuration_flow_matching import FlowMatchingConfig
 from lobe.policies.flow_matching.modeling_flow_matching import FlowMatchingPolicy
 
@@ -38,6 +42,10 @@ class Args:
     eval_every: int = 1000
     device: str = "cuda"
     seed: int = 42
+    wandb: bool = False
+    wandb_project: str = "lobe-benchmark"
+    wandb_entity: str = ""
+    save_results: str = "results/"
 
 
 def make_policy(args: Args, dataset: LeRobotDataset):
@@ -111,6 +119,28 @@ def main():
     logger.info(f"Dataset: {args.dataset_repo_id}")
     logger.info(f"Steps: {args.steps}, batch_size: {args.batch_size}")
 
+    # wandb init
+    run = None
+    if args.wandb:
+        import wandb
+
+        run = wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity or None,
+            name=f"{args.policy}-{args.steps}steps",
+            config={
+                "policy": args.policy,
+                "dataset": args.dataset_repo_id,
+                "steps": args.steps,
+                "batch_size": args.batch_size,
+                "lr": args.lr,
+                "num_inference_steps": args.num_inference_steps,
+                "use_optimal_transport": args.use_optimal_transport,
+                "seed": args.seed,
+                "device": args.device,
+            },
+        )
+
     # Load dataset with delta_timestamps for multi-step obs/action windows.
     # PushT runs at 10 Hz, so 0.1s = 1 frame.
     # n_obs_steps=2 -> [-0.1, 0.0], horizon=16 -> 16 steps into the future
@@ -125,7 +155,7 @@ def main():
         "observation.state": obs_timestamps,
         "action": action_timestamps,
     }
-    dataset = LeRobotDataset(args.dataset_repo_id, delta_timestamps=delta_timestamps)
+    dataset = LeRobotDataset(args.dataset_repo_id, delta_timestamps=delta_timestamps, video_backend="pyav")
     logger.info(f"Dataset: {len(dataset)} frames, features: {list(dataset.meta.features.keys())}")
 
     # Create policy
@@ -173,10 +203,14 @@ def main():
         if step % args.log_every == 0:
             avg_loss = sum(losses[-args.log_every :]) / min(len(losses), args.log_every)
             logger.info(f"Step {step}/{args.steps} | loss: {avg_loss:.6f}")
+            if run:
+                run.log({"train/loss": avg_loss, "train/step": step})
 
         if step % args.eval_every == 0:
             avg_ms, std_ms = benchmark_inference(policy, args.device)
             logger.info(f"Inference: {avg_ms:.2f} +/- {std_ms:.2f} ms")
+            if run:
+                run.log({"eval/inference_ms": avg_ms, "eval/inference_std_ms": std_ms, "train/step": step})
             policy.train()
 
     # Final inference benchmark
@@ -187,6 +221,33 @@ def main():
     final_loss = sum(losses[-100:]) / min(len(losses), 100)
     logger.info(f"Final loss (last 100 steps): {final_loss:.6f}")
     logger.info(f"Policy: {args.policy} | Steps: {args.steps} | Loss: {final_loss:.6f} | Latency: {avg_ms:.2f}ms")
+
+    # Save results to disk
+    results_dir = Path(args.save_results)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    results = {
+        "policy": args.policy,
+        "dataset": args.dataset_repo_id,
+        "steps": args.steps,
+        "batch_size": args.batch_size,
+        "lr": args.lr,
+        "num_inference_steps": args.num_inference_steps,
+        "use_optimal_transport": args.use_optimal_transport,
+        "seed": args.seed,
+        "device": args.device,
+        "n_params": n_params,
+        "final_loss": final_loss,
+        "inference_ms": avg_ms,
+        "inference_std_ms": std_ms,
+        "losses": losses,
+    }
+    results_path = results_dir / f"{args.policy}_{args.steps}steps.json"
+    results_path.write_text(json.dumps(results, indent=2))
+    logger.info(f"Results saved to {results_path}")
+
+    if run:
+        run.log({"final/loss": final_loss, "final/inference_ms": avg_ms, "final/n_params": n_params})
+        run.finish()
 
 
 if __name__ == "__main__":

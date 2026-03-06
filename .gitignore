@@ -10,3 +10,5 @@ datasets/
 checkpoints/
 *.png
 wandb/
+results/
+recordings/

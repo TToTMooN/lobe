@@ -23,8 +23,11 @@ All VLA models expect **224x224 RGB** images and **14-dim actions** (2x 6-DOF + 
 
 ```bash
 git clone https://github.com/TToTMooN/lobe.git && cd lobe
-uv sync
+uv sync --index-strategy unsafe-best-match           # core deps + PyTorch nightly
+uv sync --extra eval --index-strategy unsafe-best-match  # + PushT eval (pygame, gym-pusht)
 ```
+
+> **Note:** `--index-strategy unsafe-best-match` is required because PyTorch nightly (cu128) and its deps are on a separate index from PyPI.
 
 ### GPU Compatibility
 
@@ -36,13 +39,7 @@ Different GPUs require different PyTorch + CUDA builds:
 | **RTX 5090** | sm_120 (Blackwell) | `cu128` (nightly) | Deployment GPU — requires PyTorch nightly or >=2.8 with CUDA 12.8 |
 | **A100** | sm_80 | `cu118` or `cu121` | Standard PyTorch pip works |
 
-If you see `NVIDIA GeForce RTX 5090 ... is not compatible with the current PyTorch installation`, install the nightly:
-
-```bash
-uv pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
-```
-
-For H100/A100, standard PyTorch works out of the box.
+The `pyproject.toml` is configured to pull PyTorch nightly (cu128) automatically via `[tool.uv.sources]`. For H100/A100, you can remove the `[[tool.uv.index]]` and `[tool.uv.sources]` sections to use standard PyTorch.
 
 ## Quick Start
 
@@ -99,19 +96,57 @@ cd limb
 uv run limb/envs/launch.py --config_path configs/yam_pi0_bimanual.yaml
 ```
 
+## PushT Evaluation
+
+### Interactive Viewer (pygame)
+
+```bash
+# Watch policy run (untrained — random actions)
+uv run python scripts/eval_pusht.py --mode watch --device cuda
+
+# Intervene mode — click near agent to take over with mouse
+uv run python scripts/eval_pusht.py --mode intervene --device cuda
+
+# Record mode — push T yourself with mouse
+uv run python scripts/eval_pusht.py --mode record --save_dir recordings/
+
+# With a trained checkpoint
+uv run python scripts/eval_pusht.py --mode watch --checkpoint checkpoints/fm-pusht
+```
+
+**Keyboard controls:** SPACE=pause, M=toggle intervention, UP/DOWN=inference steps, LEFT/RIGHT=action chunk, 1-9=set steps, R=reset, S=save video, Q=quit.
+
+### Sweep (CLI)
+
+```bash
+# Compare inference steps
+uv run python scripts/sweep_pusht.py --inference_steps "1,2,4,8,16" --n_rollouts 3
+
+# Compare flow matching vs diffusion
+uv run python scripts/sweep_pusht.py --sweep_type policy_compare --n_rollouts 5
+
+# Log to wandb
+uv run python scripts/sweep_pusht.py --wandb --wandb_project lobe-sweep
+```
+
 ## Project Structure
 
 ```
 lobe/
+  lobe/policies/flow_matching/  # Flow Matching Policy (drop-in for DiffusionPolicy)
   configs/
-    train_xvla.yaml           # X-VLA fine-tuning config
-    train_pi0.yaml             # pi0/pi0.5 fine-tuning config
-    train_walloss.yaml         # WALL-OSS fine-tuning config
+    train_xvla.yaml             # X-VLA fine-tuning config
+    train_pi0.yaml              # pi0/pi0.5 fine-tuning config
+    train_walloss.yaml          # WALL-OSS fine-tuning config
   scripts/
-    train.sh                   # Training launcher
-    serve_policy.py            # WebSocket policy server
-  datasets/                    # Local LeRobot v2.1 datasets
-  checkpoints/                 # Training outputs
+    eval_pusht.py               # Interactive pygame eval viewer
+    sweep_pusht.py              # Batch sweep CLI
+    benchmark_pusht.py          # Training benchmark (FM vs Diffusion)
+    serve_policy.py             # WebSocket policy server
+  tests/
+    test_flow_matching.py       # 14 unit tests
+  datasets/                     # Local LeRobot v2.1 datasets
+  checkpoints/                  # Training outputs
   pyproject.toml
 ```
 
