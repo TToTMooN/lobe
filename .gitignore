@@ -1,0 +1,12 @@
+*.egg-info/
+*.egg/
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+.venv/
+.ruff_cache/
+datasets/
+checkpoints/
+*.png
+wandb/
