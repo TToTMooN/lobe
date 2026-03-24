@@ -1,7 +1,7 @@
 """Policy creation and checkpoint loading — generic across all environments.
 
-Supports FlowMatching and Diffusion policies. Environment-specific configs
-(obs dims, action dims, image shapes) come from the dataset features.
+Supports FlowMatching, Diffusion, and VLA policies (pi0, SmolVLA via LeRobot).
+Environment-specific configs (obs dims, action dims) come from the dataset features.
 """
 
 from __future__ import annotations
@@ -41,7 +41,11 @@ def create_policy(
     fm_down_dims: tuple[int, ...] = (256, 512, 1024),
     fm_embed_dim: int = 256,
 ) -> nn.Module:
-    """Create a policy from dataset features. Works for any environment."""
+    """Create a policy from dataset features. Works for any environment.
+
+    For VLA policies (pi0, smolvla), use lerobot-train directly or scripts/train_vla.py.
+    This factory handles FM and Diffusion baselines.
+    """
     input_features, output_features = split_features(features)
 
     if policy_type == "flow_matching":
@@ -68,11 +72,16 @@ def create_policy(
         config.output_features = output_features
         return DiffusionPolicy(config, dataset_stats=stats)
     else:
-        raise ValueError(f"Unknown policy type: {policy_type}")
+        raise ValueError(f"Unknown policy type: {policy_type}. Use 'flow_matching' or 'diffusion'.")
 
 
 def load_checkpoint(policy: nn.Module, checkpoint: str | Path, device: str = "cuda") -> bool:
     """Load checkpoint into policy, handling torch.compile _orig_mod prefix.
+
+    Works with checkpoints from:
+    - lobe's training scripts (model.pt)
+    - LeRobot's lerobot-train (model.safetensors)
+    - HuggingFace Hub (pytorch_model.bin)
 
     Returns True if checkpoint was loaded, False if not found.
     """
@@ -94,3 +103,26 @@ def load_checkpoint(policy: nn.Module, checkpoint: str | Path, device: str = "cu
     policy.load_state_dict(state_dict)
     logger.info(f"Loaded checkpoint: {ckpt_path}")
     return True
+
+
+def load_pretrained_policy(pretrained_path: str, device: str = "cuda") -> nn.Module:
+    """Load a pretrained LeRobot policy from HuggingFace Hub.
+
+    Works with any registered LeRobot policy (pi0, smolvla, diffusion, etc.).
+    The policy config and weights are loaded from the pretrained path.
+
+    Args:
+        pretrained_path: HuggingFace model path (e.g. "lerobot/smolvla_base", "lerobot/pi0").
+        device: Target device.
+
+    Returns:
+        Loaded policy ready for inference or fine-tuning.
+    """
+    from lerobot.configs.policies import PreTrainedConfig
+
+    config = PreTrainedConfig.from_pretrained(pretrained_path)
+    policy_class = config.get_choice_class(config.type)
+    policy = policy_class(config)
+    policy.to(device)
+    logger.info(f"Loaded pretrained policy: {pretrained_path} ({type(policy).__name__})")
+    return policy
