@@ -133,17 +133,18 @@ HTML_TEMPLATE = """
             btn.classList.toggle('active', mode === 'intervene');
         }
 
-        function sendMouse(e, active) {
+        function sendMouse(e) {
             const rect = img.getBoundingClientRect();
             const x = (e.clientX - rect.left) / rect.width * envSize;
             const y = (e.clientY - rect.top) / rect.height * envSize;
-            fetch(`/api/mouse?x=${x.toFixed(1)}&y=${y.toFixed(1)}&active=${active}`);
+            fetch(`/api/mouse?x=${x.toFixed(1)}&y=${y.toFixed(1)}&active=true`);
         }
 
-        img.addEventListener('mousedown', e => { mouseDown = true; sendMouse(e, true); });
-        img.addEventListener('mousemove', e => { if (mouseDown) sendMouse(e, true); });
-        img.addEventListener('mouseup', e => { mouseDown = false; sendMouse(e, false); });
-        img.addEventListener('mouseleave', () => { mouseDown = false; fetch('/api/mouse?active=false'); });
+        // Prevent image drag
+        img.addEventListener('dragstart', e => e.preventDefault());
+        // In intervene mode: just move mouse over image to control (no click needed)
+        img.addEventListener('mousemove', e => { if (mode === 'intervene') sendMouse(e); });
+        img.addEventListener('mouseleave', () => { fetch('/api/mouse?active=false'); });
 
         setInterval(async () => {
             const r = await fetch('/api/stats');
