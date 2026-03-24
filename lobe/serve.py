@@ -49,7 +49,7 @@ class ServeConfig:
     host: str = "0.0.0.0"
     port: int = 8000
     device: str = "cuda"
-    compile: bool = False
+    compile: bool = True
 
 
 class PolicyServer:

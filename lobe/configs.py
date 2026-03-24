@@ -55,7 +55,7 @@ class PerformanceConfig:
 
     bf16: bool = True
     tf32: bool = True
-    compile: bool = False
+    compile: bool = True
     compile_mode: str = "reduce-overhead"
     num_workers: int = 16
     prefetch_factor: int = 4
@@ -78,7 +78,7 @@ class LoggingConfig:
 class WandbConfig:
     """Weights & Biases integration."""
 
-    enable: bool = False
+    enable: bool = True
     project: str = "lobe-train"
     name: str = ""  # auto-generated if empty
     group: str = ""  # group related runs (e.g. "pusht-fm-sweep")
