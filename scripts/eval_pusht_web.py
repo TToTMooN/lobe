@@ -38,6 +38,12 @@ state = {
     "n_action_steps": 4,
     "num_inference_steps": 10,
     "rebuild_policy": False,
+    # Mouse intervention
+    "mouse_active": False,
+    "mouse_pos": None,  # (x, y) in env coords [0, 512]
+    "mode": "watch",  # watch | intervene
+    "recorded_episodes": [],
+    "current_recording": [],
 }
 state_lock = threading.Lock()
 
@@ -66,12 +72,13 @@ HTML_TEMPLATE = """
         body { margin: 0; background: #1a1a2e; color: #eee; font-family: monospace;
                display: flex; flex-direction: column; align-items: center; padding: 20px; }
         h1 { color: #e94560; margin-bottom: 10px; }
-        .stream { border: 2px solid #e94560; border-radius: 8px; }
+        .stream-container { position: relative; cursor: crosshair; }
+        .stream { border: 2px solid #e94560; border-radius: 8px; display: block; }
         .controls { margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
         button { padding: 8px 20px; font-size: 14px; font-family: monospace; cursor: pointer;
                  background: #16213e; color: #eee; border: 1px solid #e94560; border-radius: 4px; }
         button:hover { background: #e94560; }
-        button.active { background: #e94560; }
+        .active { background: #e94560 !important; }
         .sliders { margin-top: 12px; display: flex; gap: 30px; }
         .slider-group { display: flex; flex-direction: column; align-items: center; }
         .slider-group label { font-size: 12px; color: #aaa; margin-bottom: 4px; }
@@ -79,14 +86,19 @@ HTML_TEMPLATE = """
         .slider-group .val { font-size: 14px; color: #e94560; margin-top: 2px; }
         .info { margin-top: 10px; font-size: 14px; color: #aaa; }
         #stats { margin-top: 5px; font-size: 13px; }
+        #mode-label { margin-top: 5px; font-size: 13px; color: #e94560; }
     </style>
 </head>
 <body>
     <h1>LOBE — PushT Policy Eval</h1>
-    <img class="stream" src="/stream" width="{{ size }}" height="{{ size }}" />
+    <div class="stream-container" id="streamContainer">
+        <img class="stream" src="/stream" width="{{ size }}" height="{{ size }}" id="streamImg" />
+    </div>
     <div class="controls">
         <button onclick="fetch('/api/reset')">Reset (R)</button>
-        <button onclick="fetch('/api/pause')">Pause/Resume (Space)</button>
+        <button onclick="fetch('/api/pause')">Pause (Space)</button>
+        <button id="modeBtn" onclick="toggleMode()">Mode: Watch (M)</button>
+        <button onclick="fetch('/api/save_recording')">Save Recording</button>
     </div>
     <div class="sliders">
         <div class="slider-group">
@@ -105,8 +117,34 @@ HTML_TEMPLATE = """
         </div>
     </div>
     <div class="info">{{ policy_type }} | {{ checkpoint }}</div>
+    <div id="mode-label"></div>
     <div id="stats"></div>
     <script>
+        let mode = 'watch';
+        let mouseDown = false;
+        const img = document.getElementById('streamImg');
+        const envSize = 512;
+
+        function toggleMode() {
+            mode = mode === 'watch' ? 'intervene' : 'watch';
+            fetch('/api/set?mode=' + mode);
+            const btn = document.getElementById('modeBtn');
+            btn.textContent = 'Mode: ' + mode.charAt(0).toUpperCase() + mode.slice(1) + ' (M)';
+            btn.classList.toggle('active', mode === 'intervene');
+        }
+
+        function sendMouse(e, active) {
+            const rect = img.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / rect.width * envSize;
+            const y = (e.clientY - rect.top) / rect.height * envSize;
+            fetch(`/api/mouse?x=${x.toFixed(1)}&y=${y.toFixed(1)}&active=${active}`);
+        }
+
+        img.addEventListener('mousedown', e => { mouseDown = true; sendMouse(e, true); });
+        img.addEventListener('mousemove', e => { if (mouseDown) sendMouse(e, true); });
+        img.addEventListener('mouseup', e => { mouseDown = false; sendMouse(e, false); });
+        img.addEventListener('mouseleave', () => { mouseDown = false; fetch('/api/mouse?active=false'); });
+
         setInterval(async () => {
             const r = await fetch('/api/stats');
             const d = await r.json();
@@ -114,10 +152,14 @@ HTML_TEMPLATE = """
                 `Episode ${d.episode} | Step ${d.step} | ` +
                 `Coverage ${(d.coverage*100).toFixed(1)}% | Max ${(d.max_coverage*100).toFixed(1)}% | ` +
                 `Success ${d.total_successes}/${d.total_episodes} | ${d.fps.toFixed(1)} FPS`;
+            document.getElementById('mode-label').innerText =
+                d.mouse_active ? 'MOUSE CONTROL ACTIVE' : '';
         }, 500);
+
         document.addEventListener('keydown', e => {
             if (e.key === 'r') fetch('/api/reset');
             if (e.key === ' ') { e.preventDefault(); fetch('/api/pause'); }
+            if (e.key === 'm') toggleMode();
         });
     </script>
 </body>
@@ -195,16 +237,31 @@ def policy_loop(args: Args):
                 break
 
             t0 = time.perf_counter()
-            batch = pusht.obs_to_batch(obs, args.device)
-            with torch.no_grad():
-                action = policy.select_action(batch)
-            latency = (time.perf_counter() - t0) * 1000
 
-            action_np = action[0].cpu().numpy().clip(0, 512)
+            # Check if mouse is controlling
+            with state_lock:
+                mouse_active = state["mouse_active"] and state["mode"] == "intervene"
+                mouse_pos = state["mouse_pos"]
+
+            if mouse_active and mouse_pos is not None:
+                action_np = mouse_pos.copy()
+                policy.reset()  # reset action queue since we're overriding
+                latency = 0.0
+            else:
+                batch = pusht.obs_to_batch(obs, args.device)
+                with torch.no_grad():
+                    action = policy.select_action(batch)
+                action_np = action[0].cpu().numpy().clip(0, 512)
+                latency = (time.perf_counter() - t0) * 1000
             obs, reward, terminated, truncated, info = env.step(action_np)
             step += 1
             coverage = info.get("coverage", 0)
             max_coverage = max(max_coverage, coverage)
+
+            # Record action during mouse control
+            if mouse_active:
+                with state_lock:
+                    state["current_recording"].append({"action": action_np.tolist(), "step": step})
 
             frame = env.render()
             frame = cv2.resize(frame, (args.render_size, args.render_size), interpolation=cv2.INTER_NEAREST)
@@ -234,7 +291,8 @@ def policy_loop(args: Args):
                     "max_coverage": max_coverage,
                     "total_successes": total_successes,
                     "total_episodes": episode - 1,
-                    "fps": 1000.0 / max(latency, 1),
+                    "fps": 1000.0 / max(latency, 0.1),
+                    "mouse_active": mouse_active,
                 }
 
             if terminated or truncated:
@@ -308,6 +366,35 @@ def api_pause():
     return "ok"
 
 
+@app.route("/api/mouse")
+def api_mouse():
+    import numpy as np
+
+    active = request.args.get("active", "false") == "true"
+    with state_lock:
+        state["mouse_active"] = active
+        if "x" in request.args and "y" in request.args:
+            state["mouse_pos"] = np.array([float(request.args["x"]), float(request.args["y"])])
+    return "ok"
+
+
+@app.route("/api/save_recording")
+def api_save_recording():
+    from pathlib import Path
+
+    with state_lock:
+        recording = state["current_recording"].copy()
+        state["current_recording"] = []
+    if not recording:
+        return json.dumps({"saved": False, "reason": "empty"})
+    save_dir = Path("recordings")
+    save_dir.mkdir(exist_ok=True)
+    path = save_dir / f"episode_{int(time.time())}.json"
+    path.write_text(json.dumps(recording, indent=2))
+    logger.info(f"Saved recording: {path} ({len(recording)} steps)")
+    return json.dumps({"saved": True, "path": str(path), "steps": len(recording)})
+
+
 @app.route("/api/set")
 def api_set():
     changed = False
@@ -322,8 +409,11 @@ def api_set():
         val = int(request.args["num_inference_steps"])
         with state_lock:
             state["num_inference_steps"] = val
-            # Inference steps can be changed on the model directly
             state["rebuild_policy"] = True
+            changed = True
+    if "mode" in request.args:
+        with state_lock:
+            state["mode"] = request.args["mode"]
             changed = True
     return json.dumps({"changed": changed})
 
