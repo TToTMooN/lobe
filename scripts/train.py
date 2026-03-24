@@ -1,10 +1,21 @@
-"""Train Flow Matching / Diffusion on PushT.
+"""Generic policy training — works with any registered environment.
 
 Usage:
-    uv run python scripts/train_pusht.py
-    uv run python scripts/train_pusht.py --policy.type diffusion
-    uv run python scripts/train_pusht.py --train.steps 100000 --wandb.enable
-    uv run python scripts/train_pusht.py --logging.eval-every 10000 --performance.gpu-preload
+    # PushT (default)
+    uv run python scripts/train.py
+    uv run python scripts/train.py --env.name pusht --wandb.enable
+
+    # PushT with GPU preload
+    uv run python scripts/train.py --performance.gpu-preload
+
+    # YAM bimanual (future)
+    uv run python scripts/train.py --env.name yam --env.dataset-repo-id yourname/yam-red-cube
+
+    # Diffusion policy
+    uv run python scripts/train.py --policy.type diffusion
+
+    # All config options
+    uv run python scripts/train.py --help
 """
 
 from __future__ import annotations
@@ -20,7 +31,7 @@ from torch.utils.data import DataLoader
 
 import lobe.video_compat  # noqa: F401
 from lobe.configs import TrainPipelineConfig
-from lobe.envs import pusht
+from lobe.envs import get_env
 from lobe.policies.factory import create_policy
 
 
@@ -38,9 +49,9 @@ def save_checkpoint(policy, output_dir: Path, policy_type: str, step: int, ema=N
     return ckpt_dir
 
 
-def train_one(policy_type: str, cfg: TrainPipelineConfig, dataset, features):
+def train_one(policy_type: str, cfg: TrainPipelineConfig, dataset, features, env_module):
     logger.info(f"{'=' * 60}")
-    logger.info(f"Training: {policy_type} for {cfg.train.steps} steps")
+    logger.info(f"Training: {policy_type} | env: {cfg.env.name} | steps: {cfg.train.steps}")
     logger.info(f"bf16={cfg.performance.bf16} | compile={cfg.performance.compile} | batch={cfg.train.batch_size}")
     logger.info(f"{'=' * 60}")
 
@@ -104,13 +115,18 @@ def train_one(policy_type: str, cfg: TrainPipelineConfig, dataset, features):
 
         run = wandb.init(
             project=cfg.wandb.project,
+            name=f"{cfg.env.name}_{policy_type}",
             config={
                 "policy_type": policy_type,
                 "env": vars(cfg.env),
                 "train": vars(cfg.train),
                 "policy": vars(cfg.policy),
+                "performance": vars(cfg.performance),
             },
         )
+
+    # Check if env supports evaluation
+    has_eval = hasattr(env_module, "evaluate")
 
     data_iter = iter(dataloader)
     losses = []
@@ -153,23 +169,23 @@ def train_one(policy_type: str, cfg: TrainPipelineConfig, dataset, features):
                 f"| ETA: {(cfg.train.steps - step) / sps:.0f}s"
             )
             if run:
-                run.log({f"{policy_type}/loss": avg_loss, "step": step})
+                run.log({"loss": avg_loss, "lr": optimizer.param_groups[0]["lr"]}, step=step)
 
         if step % cfg.logging.save_every == 0:
             ckpt_dir = save_checkpoint(policy, output_dir, policy_type, step, ema)
             logger.info(f"Checkpoint: {ckpt_dir}")
 
-        if cfg.logging.eval_every > 0 and step % cfg.logging.eval_every == 0:
+        if has_eval and cfg.logging.eval_every > 0 and step % cfg.logging.eval_every == 0:
             if ema is not None:
                 ema.store(policy.parameters())
                 ema.copy_to(policy.parameters())
-            success_rate, avg_reward = pusht.evaluate(policy, cfg.device, cfg.logging.eval_rollouts)
+            success_rate, avg_reward = env_module.evaluate(policy, cfg.device, cfg.logging.eval_rollouts)
             if ema is not None:
                 ema.restore(policy.parameters())
             policy.train()
             logger.info(f"[{policy_type}] Eval {step}: success={success_rate * 100:.0f}%, reward={avg_reward:.3f}")
             if run:
-                run.log({f"{policy_type}/eval_success": success_rate, f"{policy_type}/eval_reward": avg_reward})
+                run.log({"eval/success_rate": success_rate, "eval/avg_reward": avg_reward}, step=step)
 
     # Final save
     ckpt_dir = save_checkpoint(policy, output_dir, policy_type, cfg.train.steps, ema)
@@ -177,6 +193,7 @@ def train_one(policy_type: str, cfg: TrainPipelineConfig, dataset, features):
 
     meta = {
         "policy": policy_type,
+        "env": cfg.env.name,
         "steps": cfg.train.steps,
         "final_loss": sum(losses[-100:]) / min(len(losses), 100),
         "n_params": n_params,
@@ -203,8 +220,13 @@ def main():
     gpu_name = torch.cuda.get_device_name(0) if device == "cuda" else "CPU"
     logger.info(f"Device: {device} ({gpu_name})")
 
-    logger.info("Loading dataset...")
-    dataset, features = pusht.load_dataset(cfg.env.dataset_repo_id)
+    # Load env module
+    env_module = get_env(cfg.env.name)
+    logger.info(f"Environment: {cfg.env.name}")
+
+    # Load dataset
+    logger.info(f"Loading dataset: {cfg.env.dataset_repo_id}")
+    dataset, features = env_module.load_dataset(cfg.env.dataset_repo_id)
     logger.info(f"Dataset: {len(dataset)} frames")
 
     if cfg.performance.gpu_preload:
@@ -212,12 +234,13 @@ def main():
 
         dataset = preload_dataset_to_gpu(dataset, device)
 
+    # Train
     policies = [cfg.policy.type]
     if cfg.policy.type == "both":
         policies = ["flow_matching", "diffusion"]
 
     for policy_type in policies:
-        train_one(policy_type, cfg, dataset, features)
+        train_one(policy_type, cfg, dataset, features, env_module)
 
 
 if __name__ == "__main__":

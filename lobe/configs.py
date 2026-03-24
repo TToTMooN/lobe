@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 class EnvConfig:
     """Environment / dataset configuration."""
 
+    name: str = "pusht"  # pusht | yam (see lobe/envs/)
     dataset_repo_id: str = "lerobot/pusht_image"
     fps: float = 10.0
     n_obs_steps: int = 2
