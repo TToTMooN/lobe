@@ -55,7 +55,7 @@ class Args:
     mode: str = "watch"  # watch | intervene | record
     policy_type: str = "flow_matching"  # flow_matching | diffusion
     checkpoint: str = ""
-    num_inference_steps: int = 1
+    num_inference_steps: int = 10
     horizon: int = 16
     n_action_steps: int = 8
     max_episodes: int = 0  # 0 = unlimited
@@ -64,7 +64,7 @@ class Args:
     device: str = "cuda"
     save_dir: str = "recordings/"
     save_video: bool = True
-    dataset_repo_id: str = "lerobot/pusht"
+    dataset_repo_id: str = "lerobot/pusht_image"
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +83,9 @@ def load_dataset_stats(repo_id: str):
         "observation.state": obs_timestamps,
         "action": action_timestamps,
     }
-    dataset = LeRobotDataset(repo_id, delta_timestamps=delta_timestamps, video_backend="pyav")
+    is_video = "image" not in repo_id
+    kwargs = {"video_backend": "torchcodec"} if is_video else {}
+    dataset = LeRobotDataset(repo_id, delta_timestamps=delta_timestamps, **kwargs)
     features = dataset_to_policy_features(dataset.meta.features)
     return dataset.meta.stats, features
 
@@ -117,14 +119,15 @@ def make_policy(args: Args, stats, features):
     if args.checkpoint and Path(args.checkpoint).exists():
         ckpt_path = Path(args.checkpoint)
         if ckpt_path.is_dir():
-            # Look for model.safetensors or pytorch_model.bin
-            for name in ["model.safetensors", "pytorch_model.bin"]:
+            for name in ["model.pt", "model.safetensors", "pytorch_model.bin"]:
                 if (ckpt_path / name).exists():
                     ckpt_path = ckpt_path / name
                     break
         if ckpt_path.is_file():
             state_dict = torch.load(ckpt_path, map_location=args.device, weights_only=True)
-            policy.load_state_dict(state_dict, strict=False)
+            # Strip _orig_mod. prefix from torch.compile if present
+            state_dict = {k.replace("._orig_mod", ""): v for k, v in state_dict.items()}
+            policy.load_state_dict(state_dict)
             logger.info(f"Loaded checkpoint: {ckpt_path}")
 
     return policy

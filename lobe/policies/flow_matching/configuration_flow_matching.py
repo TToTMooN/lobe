@@ -59,24 +59,26 @@ class FlowMatchingConfig(PreTrainedConfig):
     vision_backbone: str = "resnet18"
     resize_shape: tuple[int, int] | None = None
     crop_ratio: float = 1.0
-    crop_shape: tuple[int, int] | None = None
+    crop_shape: tuple[int, int] | None = (76, 76)
     crop_is_random: bool = True
     pretrained_backbone_weights: str | None = None
     use_group_norm: bool = True
     spatial_softmax_num_keypoints: int = 32
     use_separate_rgb_encoder_per_camera: bool = False
 
-    # U-Net (same as diffusion)
-    down_dims: tuple[int, ...] = (512, 1024, 2048)
+    # U-Net (HRI-EU defaults for flow matching)
+    down_dims: tuple[int, ...] = (256, 512, 1024)
     kernel_size: int = 5
     n_groups: int = 8
-    diffusion_step_embed_dim: int = 128
+    diffusion_step_embed_dim: int = 256
     use_film_scale_modulation: bool = True
 
     # Flow matching specific
     sigma: float = 0.0
-    num_inference_steps: int = 1
+    num_inference_steps: int = 10
     use_optimal_transport: bool = False
+    clip_sample: bool = False
+    clip_sample_range: float = 1.0
 
     # Inference
     compile_model: bool = False

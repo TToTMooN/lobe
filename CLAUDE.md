@@ -1,5 +1,7 @@
 # LOBE — Learning Orchestration, Brain-to-Embodiment
 
+> **First principles: clean, essential, nothing more.** This is a unified library to train and serve policies for [limb](https://github.com/TToTMooN/limb). PushT is well-researched in the open-source community — check existing implementations before reinventing. Focus on what downstream robot deployment actually needs.
+
 > The motor cortex (frontal **lobe**) learns to control **limb**s.
 
 ## Project Goal

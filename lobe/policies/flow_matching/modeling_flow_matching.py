@@ -231,9 +231,14 @@ class FlowMatchingModel(nn.Module):
         dt = 1.0 / self.num_inference_steps
 
         for i in range(self.num_inference_steps):
-            t = torch.full((batch_size,), i / self.num_inference_steps, dtype=dtype, device=device)
-            velocity = self.unet(sample, t, global_cond=global_cond)
-            sample = sample + velocity * dt
+            t_cur = i / self.num_inference_steps
+            t = torch.full((batch_size,), t_cur, dtype=dtype, device=device)
+
+            # Midpoint method (2nd-order) — much more accurate than Euler for same step count
+            v1 = self.unet(sample, t, global_cond=global_cond)
+            t_mid = torch.full((batch_size,), t_cur + 0.5 * dt, dtype=dtype, device=device)
+            v2 = self.unet(sample + v1 * (0.5 * dt), t_mid, global_cond=global_cond)
+            sample = sample + v2 * dt
 
         return sample
 

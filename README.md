@@ -96,7 +96,22 @@ cd limb
 uv run limb/envs/launch.py --config_path configs/yam_pi0_bimanual.yaml
 ```
 
-## PushT Evaluation
+## PushT Training & Evaluation
+
+### Train
+
+```bash
+# Flow matching only (~8 min for 5000 steps on H100)
+uv run python scripts/train_pusht.py --policy flow_matching --steps 5000
+
+# Both flow matching + diffusion
+uv run python scripts/train_pusht.py --policy both --steps 5000
+
+# Performance flags (all enabled by default)
+uv run python scripts/train_pusht.py --bf16 --compile --tf32 --batch-size 256 --num-workers 16
+```
+
+> Uses `lerobot/pusht_image` (pre-decoded images) by default. ~10x faster than video-based `lerobot/pusht`.
 
 ### Interactive Viewer (pygame)
 
@@ -111,7 +126,7 @@ uv run python scripts/eval_pusht.py --mode intervene --device cuda
 uv run python scripts/eval_pusht.py --mode record --save_dir recordings/
 
 # With a trained checkpoint
-uv run python scripts/eval_pusht.py --mode watch --checkpoint checkpoints/fm-pusht
+uv run python scripts/eval_pusht.py --mode watch --checkpoint checkpoints/pusht/flow_matching_5000
 ```
 
 **Keyboard controls:** SPACE=pause, M=toggle intervention, UP/DOWN=inference steps, LEFT/RIGHT=action chunk, 1-9=set steps, R=reset, S=save video, Q=quit.

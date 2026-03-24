@@ -38,7 +38,7 @@ from lobe.policies.flow_matching.modeling_flow_matching import FlowMatchingPolic
 class Args:
     policy_type: str = "flow_matching"
     checkpoint: str = ""
-    dataset_repo_id: str = "lerobot/pusht"
+    dataset_repo_id: str = "lerobot/pusht_image"
     sweep_type: str = "inference_steps"  # inference_steps | action_steps | horizon | policy_compare
     inference_steps: str = "1,2,4,8,16"
     action_steps: str = "1,2,4,8"
@@ -63,7 +63,9 @@ def load_dataset_info(repo_id: str):
         "observation.state": obs_timestamps,
         "action": action_timestamps,
     }
-    dataset = LeRobotDataset(repo_id, delta_timestamps=delta_timestamps, video_backend="pyav")
+    is_video = "image" not in repo_id
+    kwargs = {"video_backend": "torchcodec"} if is_video else {}
+    dataset = LeRobotDataset(repo_id, delta_timestamps=delta_timestamps, **kwargs)
     features = dataset_to_policy_features(dataset.meta.features)
     return dataset.meta.stats, features
 
@@ -93,12 +95,16 @@ def make_policy(policy_type, stats, features, horizon, n_action_steps, num_infer
     if checkpoint and Path(checkpoint).exists():
         ckpt = Path(checkpoint)
         if ckpt.is_dir():
-            for name in ["model.safetensors", "pytorch_model.bin"]:
+            for name in ["model.pt", "model.safetensors", "pytorch_model.bin"]:
                 if (ckpt / name).exists():
                     ckpt = ckpt / name
                     break
         if ckpt.is_file():
-            policy.load_state_dict(torch.load(ckpt, map_location=device, weights_only=True), strict=False)
+            state_dict = torch.load(ckpt, map_location=device, weights_only=True)
+            # Strip _orig_mod. prefix from torch.compile if present
+            state_dict = {k.replace("._orig_mod", ""): v for k, v in state_dict.items()}
+            policy.load_state_dict(state_dict)
+            logger.info(f"Loaded checkpoint: {ckpt}")
 
     policy.to(device)
     policy.eval()
@@ -292,11 +298,25 @@ def main():
         for ptype in ["flow_matching", "diffusion"]:
             logger.info(f"Running: policy={ptype}")
             n_steps = 1 if ptype == "flow_matching" else 10
+            # Resolve checkpoint: if given a flow_matching checkpoint, derive the diffusion one and vice versa
+            ckpt = args.checkpoint
+            if ckpt:
+                ckpt_path = Path(ckpt)
+                # Try replacing policy type in checkpoint path (e.g. flow_matching_5000 -> diffusion_5000)
+                this_type = "flow_matching" if "flow_matching" in ckpt_path.name else "diffusion"
+                if ptype != this_type:
+                    derived = ckpt_path.parent / ckpt_path.name.replace(this_type, ptype)
+                    if derived.exists():
+                        ckpt = str(derived)
+                        logger.info(f"Using derived checkpoint: {ckpt}")
+                    else:
+                        logger.warning(f"No checkpoint found for {ptype} at {derived}, using random init")
+                        ckpt = ""
             r = run_sweep_config(
                 ptype,
                 stats,
                 features,
-                args.checkpoint,
+                ckpt,
                 device,
                 16,
                 8,
