@@ -74,12 +74,15 @@ def main():
         latencies = []
         for i in range(args.n_steps):
             obs = {
-                "state": np.random.randn(14).astype(np.float32),
+                "state": np.random.randn(2).astype(np.float32),
                 "images": {"cam": np.random.randint(0, 255, (96, 96, 3), dtype=np.uint8)},
             }
             t0 = time.perf_counter()
             resp = client.infer(obs)
             latencies.append((time.perf_counter() - t0) * 1000)
+            if "error" in resp:
+                logger.error(f"Server error: {resp['error']}")
+                break
             if i == 0:
                 logger.info(f"First response: actions shape={resp['actions'].shape}, timing={resp.get('timing')}")
         latencies = np.array(latencies)
