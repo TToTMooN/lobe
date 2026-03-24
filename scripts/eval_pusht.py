@@ -37,7 +37,8 @@ import tyro
 from loguru import logger
 
 import lobe.video_compat  # noqa: F401
-from lobe import pusht
+from lobe.envs import pusht
+from lobe.policies.factory import create_policy, load_checkpoint
 
 WINDOW_SIZE = 512
 FPS = int(pusht.FPS)
@@ -67,7 +68,7 @@ class Args:
 
 def make_policy(args: Args):
     dataset, features = pusht.load_dataset(args.dataset_repo_id)
-    policy = pusht.create_policy(
+    policy = create_policy(
         args.policy_type,
         features,
         dataset.meta.stats,
@@ -75,7 +76,7 @@ def make_policy(args: Args):
         n_action_steps=args.n_action_steps,
         num_inference_steps=args.num_inference_steps,
     )
-    pusht.load_checkpoint(policy, args.checkpoint, args.device)
+    load_checkpoint(policy, args.checkpoint, args.device)
     return policy
 
 

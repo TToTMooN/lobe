@@ -24,7 +24,8 @@ from flask import Flask, Response, render_template_string, request
 from loguru import logger
 
 import lobe.video_compat  # noqa: F401
-from lobe import pusht
+from lobe.envs import pusht
+from lobe.policies.factory import create_policy, load_checkpoint
 
 app = Flask(__name__)
 
@@ -194,14 +195,14 @@ def policy_loop(args: Args):
         with state_lock:
             n_act = state["n_action_steps"]
             n_inf = state["num_inference_steps"]
-        p = pusht.create_policy(
+        p = create_policy(
             args.policy_type,
             features,
             stats,
             n_action_steps=n_act,
             num_inference_steps=n_inf,
         )
-        pusht.load_checkpoint(p, args.checkpoint, args.device)
+        load_checkpoint(p, args.checkpoint, args.device)
         p.to(args.device)
         p.eval()
         logger.info(f"Policy built: act_steps={n_act}, inf_steps={n_inf}")

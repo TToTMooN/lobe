@@ -18,7 +18,8 @@ import tyro
 from loguru import logger
 
 import lobe.video_compat  # noqa: F401
-from lobe import pusht
+from lobe.envs import pusht
+from lobe.policies.factory import create_policy, load_checkpoint
 
 
 @dataclass
@@ -55,7 +56,7 @@ def run_sweep_config(
     """Run n_rollouts for a single config and return aggregated metrics."""
     results = []
     for i in range(n_rollouts):
-        policy = pusht.create_policy(
+        policy = create_policy(
             policy_type,
             features,
             stats,
@@ -63,7 +64,7 @@ def run_sweep_config(
             n_action_steps=n_action_steps,
             num_inference_steps=num_inference_steps,
         )
-        pusht.load_checkpoint(policy, checkpoint, device)
+        load_checkpoint(policy, checkpoint, device)
         policy.to(device)
         policy.eval()
         r = pusht.run_rollout(policy, device, seed + i, max_steps)
