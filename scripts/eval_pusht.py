@@ -34,20 +34,13 @@ import numpy as np
 import pygame
 import torch
 import tyro
-from lerobot.configs.types import FeatureType
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import dataset_to_policy_features
-from lerobot.envs.utils import preprocess_observation
-from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from loguru import logger
 
-import lobe.video_compat  # noqa: F401 — patch video decoding for torch nightly
-from lobe.policies.flow_matching.configuration_flow_matching import FlowMatchingConfig
-from lobe.policies.flow_matching.modeling_flow_matching import FlowMatchingPolicy
+import lobe.video_compat  # noqa: F401
+from lobe import pusht
 
 WINDOW_SIZE = 512
-FPS = 10
+FPS = int(pusht.FPS)
 
 
 @dataclass
@@ -56,15 +49,15 @@ class Args:
     policy_type: str = "flow_matching"  # flow_matching | diffusion
     checkpoint: str = ""
     num_inference_steps: int = 10
-    horizon: int = 16
-    n_action_steps: int = 8
+    horizon: int = pusht.HORIZON
+    n_action_steps: int = pusht.N_ACTION_STEPS
     max_episodes: int = 0  # 0 = unlimited
-    max_steps: int = 300
+    max_steps: int = pusht.MAX_STEPS
     seed: int = 42
     device: str = "cuda"
     save_dir: str = "recordings/"
     save_video: bool = True
-    dataset_repo_id: str = "lerobot/pusht_image"
+    dataset_repo_id: str = pusht.DEFAULT_DATASET
 
 
 # ---------------------------------------------------------------------------
@@ -72,75 +65,23 @@ class Args:
 # ---------------------------------------------------------------------------
 
 
-def load_dataset_stats(repo_id: str):
-    fps = 10.0
-    n_obs_steps = 2
-    horizon = 16
-    obs_timestamps = [i / fps for i in range(1 - n_obs_steps, 1)]
-    action_timestamps = [i / fps for i in range(1 - n_obs_steps, 1 - n_obs_steps + horizon)]
-    delta_timestamps = {
-        "observation.image": obs_timestamps,
-        "observation.state": obs_timestamps,
-        "action": action_timestamps,
-    }
-    is_video = "image" not in repo_id
-    kwargs = {"video_backend": "torchcodec"} if is_video else {}
-    dataset = LeRobotDataset(repo_id, delta_timestamps=delta_timestamps, **kwargs)
-    features = dataset_to_policy_features(dataset.meta.features)
-    return dataset.meta.stats, features
-
-
-def make_policy(args: Args, stats, features):
-    input_features = {k: v for k, v in features.items() if v.type != FeatureType.ACTION}
-    output_features = {k: v for k, v in features.items() if v.type == FeatureType.ACTION}
-
-    if args.policy_type == "flow_matching":
-        config = FlowMatchingConfig(
-            n_obs_steps=2,
-            horizon=args.horizon,
-            n_action_steps=args.n_action_steps,
-            num_inference_steps=args.num_inference_steps,
-        )
-        config.input_features = input_features
-        config.output_features = output_features
-        policy = FlowMatchingPolicy(config, dataset_stats=stats)
-    elif args.policy_type == "diffusion":
-        config = DiffusionConfig(
-            n_obs_steps=2,
-            horizon=args.horizon,
-            n_action_steps=args.n_action_steps,
-        )
-        config.input_features = input_features
-        config.output_features = output_features
-        policy = DiffusionPolicy(config, dataset_stats=stats)
-    else:
-        raise ValueError(f"Unknown policy: {args.policy_type}")
-
-    if args.checkpoint and Path(args.checkpoint).exists():
-        ckpt_path = Path(args.checkpoint)
-        if ckpt_path.is_dir():
-            for name in ["model.pt", "model.safetensors", "pytorch_model.bin"]:
-                if (ckpt_path / name).exists():
-                    ckpt_path = ckpt_path / name
-                    break
-        if ckpt_path.is_file():
-            state_dict = torch.load(ckpt_path, map_location=args.device, weights_only=True)
-            # Strip _orig_mod. prefix from torch.compile if present
-            state_dict = {k.replace("._orig_mod", ""): v for k, v in state_dict.items()}
-            policy.load_state_dict(state_dict)
-            logger.info(f"Loaded checkpoint: {ckpt_path}")
-
+def make_policy(args: Args):
+    dataset, features = pusht.load_dataset(args.dataset_repo_id)
+    policy = pusht.create_policy(
+        args.policy_type,
+        features,
+        dataset.meta.stats,
+        horizon=args.horizon,
+        n_action_steps=args.n_action_steps,
+        num_inference_steps=args.num_inference_steps,
+    )
+    pusht.load_checkpoint(policy, args.checkpoint, args.device)
     return policy
 
 
 def obs_to_policy_batch(obs: dict, device: str) -> dict:
-    """Convert a single gym obs dict to policy input batch.
-
-    select_action expects single-frame obs — temporal stacking is handled
-    internally by the policy's queues via populate_queues.
-    """
-    processed = preprocess_observation(obs)
-    return {k: v.to(device) for k, v in processed.items()}
+    """Convert a single gym obs dict to policy input batch."""
+    return pusht.obs_to_batch(obs, device)
 
 
 # ---------------------------------------------------------------------------
@@ -196,10 +137,8 @@ def main():
     # Load policy (not needed in record mode but load anyway for switching)
     policy = None
     if args.mode != "record":
-        logger.info("Loading dataset stats...")
-        stats, features = load_dataset_stats(args.dataset_repo_id)
-        logger.info("Creating policy...")
-        policy = make_policy(args, stats, features)
+        logger.info("Loading policy...")
+        policy = make_policy(args)
         policy.to(device)
         policy.eval()
         n_params = sum(p.numel() for p in policy.parameters())
