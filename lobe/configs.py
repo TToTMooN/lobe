@@ -80,6 +80,9 @@ class WandbConfig:
 
     enable: bool = False
     project: str = "lobe-train"
+    name: str = ""  # auto-generated if empty
+    group: str = ""  # group related runs (e.g. "pusht-fm-sweep")
+    tags: str = ""  # comma-separated tags
 
 
 @dataclass

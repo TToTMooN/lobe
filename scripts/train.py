@@ -85,14 +85,38 @@ def train_one(policy_type: str, cfg: TrainPipelineConfig, dataset, features, env
         ema.to(cfg.device)
         logger.info(f"EMA enabled (power={cfg.train.ema_power})")
 
+    # wandb — init BEFORE dataloader to avoid fork conflicts with persistent workers
+    run = None
+    if cfg.wandb.enable:
+        import wandb
+
+        run_name = cfg.wandb.name or f"{cfg.env.name}_{policy_type}_{cfg.train.steps // 1000}k"
+        tags = [t.strip() for t in cfg.wandb.tags.split(",") if t.strip()] if cfg.wandb.tags else []
+        tags += [cfg.env.name, policy_type]
+        run = wandb.init(
+            project=cfg.wandb.project,
+            name=run_name,
+            group=cfg.wandb.group or cfg.env.name,
+            tags=tags,
+            config={
+                "policy_type": policy_type,
+                "n_params": n_params,
+                "env": vars(cfg.env),
+                "train": vars(cfg.train),
+                "policy": vars(cfg.policy),
+                "performance": vars(cfg.performance),
+            },
+        )
+
+    nw = cfg.performance.num_workers
     dataloader = DataLoader(
         dataset,
         batch_size=cfg.train.batch_size,
         shuffle=True,
-        num_workers=cfg.performance.num_workers,
+        num_workers=nw,
         pin_memory=True,
-        persistent_workers=True,
-        prefetch_factor=cfg.performance.prefetch_factor,
+        persistent_workers=nw > 0,
+        prefetch_factor=cfg.performance.prefetch_factor if nw > 0 else None,
         drop_last=True,
     )
     optimizer = torch.optim.AdamW(policy.get_optim_params(), lr=cfg.train.lr, weight_decay=1e-6)
@@ -107,23 +131,6 @@ def train_one(policy_type: str, cfg: TrainPipelineConfig, dataset, features, env
 
     use_amp = cfg.performance.bf16 and cfg.device == "cuda"
     amp_dtype = torch.bfloat16 if cfg.performance.bf16 else torch.float32
-
-    # wandb
-    run = None
-    if cfg.wandb.enable:
-        import wandb
-
-        run = wandb.init(
-            project=cfg.wandb.project,
-            name=f"{cfg.env.name}_{policy_type}",
-            config={
-                "policy_type": policy_type,
-                "env": vars(cfg.env),
-                "train": vars(cfg.train),
-                "policy": vars(cfg.policy),
-                "performance": vars(cfg.performance),
-            },
-        )
 
     # Check if env supports evaluation
     has_eval = hasattr(env_module, "evaluate")
