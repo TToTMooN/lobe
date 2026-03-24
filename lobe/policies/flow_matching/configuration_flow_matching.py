@@ -76,11 +76,12 @@ class FlowMatchingConfig(PreTrainedConfig):
     # Flow matching specific
     sigma: float = 0.0
     num_inference_steps: int = 10
+    ode_solver: str = "euler"  # euler (pi0 standard, fast) | midpoint (2nd-order, more accurate)
     use_optimal_transport: bool = False
     clip_sample: bool = False
     clip_sample_range: float = 1.0
 
-    # Inference
+    # Inference / serving
     compile_model: bool = False
     compile_mode: str = "reduce-overhead"
 

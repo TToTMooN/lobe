@@ -212,15 +212,14 @@ class FlowMatchingModel(nn.Module):
         global_cond: Tensor | None = None,
         generator: torch.Generator | None = None,
     ) -> Tensor:
-        """Generate actions via Euler integration of the learned velocity field.
+        """Generate actions via ODE integration of the learned velocity field.
 
-        Instead of reverse diffusion (DDPM: x_t -> x_{t-1} for t=T..0),
-        we integrate forward (FM: x_0 -> x_1 via dx = v(x,t)*dt for t=0..1).
+        Integrates forward: x_0 -> x_1 via dx = v(x,t)*dt for t=0..1.
+        Supports euler (pi0 standard, 1 eval/step) and midpoint (2nd-order, 2 evals/step).
         """
         device = get_device_from_parameters(self)
         dtype = get_dtype_from_parameters(self)
 
-        # Start from noise (x_0 in flow matching notation)
         sample = torch.randn(
             size=(batch_size, self.config.horizon, self.config.action_feature.shape[0]),
             dtype=dtype,
@@ -229,16 +228,19 @@ class FlowMatchingModel(nn.Module):
         )
 
         dt = 1.0 / self.num_inference_steps
+        use_midpoint = self.config.ode_solver == "midpoint"
 
         for i in range(self.num_inference_steps):
             t_cur = i / self.num_inference_steps
             t = torch.full((batch_size,), t_cur, dtype=dtype, device=device)
+            v = self.unet(sample, t, global_cond=global_cond)
 
-            # Midpoint method (2nd-order) — much more accurate than Euler for same step count
-            v1 = self.unet(sample, t, global_cond=global_cond)
-            t_mid = torch.full((batch_size,), t_cur + 0.5 * dt, dtype=dtype, device=device)
-            v2 = self.unet(sample + v1 * (0.5 * dt), t_mid, global_cond=global_cond)
-            sample = sample + v2 * dt
+            if use_midpoint:
+                # Midpoint (2nd-order): evaluate at half-step, use that velocity for full step
+                t_mid = torch.full((batch_size,), t_cur + 0.5 * dt, dtype=dtype, device=device)
+                v = self.unet(sample + v * (0.5 * dt), t_mid, global_cond=global_cond)
+
+            sample = sample + v * dt
 
         return sample
 

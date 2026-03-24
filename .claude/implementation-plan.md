@@ -137,7 +137,27 @@ One command to serve any model. limb connects with same `PolicyClient` regardles
 
 ## Key Learnings
 
-1. **Data loading is the bottleneck, not GPU.** Use `lerobot/pusht_image` (pre-decoded) over `lerobot/pusht` (video). AV1 video decode is ~220ms/frame. Image loading is near-instant. This applies to all LeRobot datasets — always prefer image format for training.
+1. **Data loading is the bottleneck, not GPU.** Use `lerobot/pusht_image` (pre-decoded) over `lerobot/pusht` (video). AV1 video decode is ~220ms/frame. Image loading is near-instant. For small datasets, GPU preload (`lobe.video_preload`) eliminates all loading overhead.
 2. **torch.compile gives ~50% speedup** after warmup on H100. Worth it for runs >1000 steps.
 3. **bf16 + TF32** are free performance on Ampere+. Always enable.
-4. **16 dataloader workers** is the sweet spot on this machine.
+4. **FM needs random crop augmentation** (crop_ratio=0.8). Diffusion gets implicit regularization from noise; FM doesn't.
+5. **EMA is secondary** to crop for FM quality, but still recommended for smoother inference.
+
+## FM Policy Design Choices
+
+| Aspect | Choice | Rationale |
+|--------|--------|-----------|
+| ODE solver | Euler (default), midpoint (option) | pi0/pi0.5/SmolVLA all use Euler 10 steps. Midpoint for quality. |
+| Inference steps | 10 | pi0 standard. Amortized by action chunking. |
+| U-Net dims | (256, 512, 1024) | HRI-EU/real-is-sim standard. 78M params. |
+| Timestep embed | 256 | Larger than diffusion's 128, better for [0,1] range. |
+| Crop ratio | 0.8 | Prevents visual encoder overfitting. Critical for FM. |
+| Normalization | MIN_MAX actions, MEAN_STD images | Standard LeRobot convention. |
+| sigma | 0.0 | Deterministic OT path (CondOT). |
+
+## Future Optimizations
+
+- **Consistency FM / Rectified Flow**: 1-2 step inference. Requires modified training loss.
+- **Streaming Flow Policy (SFP)**: Stream actions as Euler steps complete. Best for tight control loops.
+- **Fused CUDA kernels**: Conv1d+GroupNorm+Mish fusion (diffusion_policy_accelerated). For serving.
+- **GPU video decode**: torchcodec device="cuda" for video datasets. Needs num_workers=0.
