@@ -58,8 +58,8 @@ class FlowMatchingConfig(PreTrainedConfig):
     # Vision backbone (same as diffusion)
     vision_backbone: str = "resnet18"
     resize_shape: tuple[int, int] | None = None
-    crop_ratio: float = 1.0
-    crop_shape: tuple[int, int] | None = (76, 76)
+    crop_ratio: float = 0.8
+    crop_shape: tuple[int, int] | None = None
     crop_is_random: bool = True
     pretrained_backbone_weights: str | None = None
     use_group_norm: bool = True
@@ -148,7 +148,13 @@ class FlowMatchingConfig(PreTrainedConfig):
         if len(self.image_features) == 0 and self.env_state_feature is None:
             raise ValueError("You must provide at least one image or the environment state among the inputs.")
 
-        if self.resize_shape is None and self.crop_shape is not None:
+        # Compute crop_shape from crop_ratio and image size if not explicitly set
+        if self.crop_shape is None and self.crop_ratio < 1.0 and len(self.image_features) > 0:
+            first_image_ft = next(iter(self.image_features.values()))
+            h, w = first_image_ft.shape[1], first_image_ft.shape[2]
+            self.crop_shape = (int(h * self.crop_ratio), int(w * self.crop_ratio))
+
+        if self.crop_shape is not None:
             for key, image_ft in self.image_features.items():
                 if self.crop_shape[0] > image_ft.shape[1] or self.crop_shape[1] > image_ft.shape[2]:
                     raise ValueError(
