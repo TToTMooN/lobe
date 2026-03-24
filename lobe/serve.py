@@ -185,6 +185,7 @@ def main():
     dataset, features = env_module.load_dataset(config.dataset_repo_id)
 
     # Create and load policy
+    # Create uncompiled first, load weights, then compile (avoids _orig_mod key mismatch)
     policy = create_policy(
         config.policy_type,
         features,
@@ -193,7 +194,7 @@ def main():
         horizon=config.horizon,
         n_action_steps=config.n_action_steps,
         num_inference_steps=config.num_inference_steps,
-        compile_model=config.compile,
+        compile_model=False,
     )
 
     if config.checkpoint:
@@ -203,6 +204,10 @@ def main():
 
     policy.to(config.device)
     policy.eval()
+
+    if config.compile:
+        logger.info("Compiling model with torch.compile (first inference will be slow)...")
+        policy.flow_matching.unet = torch.compile(policy.flow_matching.unet, mode="reduce-overhead")
 
     n_params = sum(p.numel() for p in policy.parameters())
     logger.info(f"Loaded policy: {n_params:,} params")
