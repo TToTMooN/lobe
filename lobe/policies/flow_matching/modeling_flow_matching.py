@@ -19,21 +19,21 @@ from collections import deque
 import einops
 import torch
 import torch.nn.functional as F  # noqa: N812
-from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from lerobot.policies.diffusion.modeling_diffusion import (
     DiffusionConditionalUnet1d,
     DiffusionRgbEncoder,
 )
-from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import (
     get_device_from_parameters,
     get_dtype_from_parameters,
     populate_queues,
 )
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from torch import Tensor, nn
 
 from lobe.policies.flow_matching.configuration_flow_matching import FlowMatchingConfig
+from lobe.policies.normalize import Normalize, Unnormalize
 
 
 class FlowMatchingPolicy(PreTrainedPolicy):

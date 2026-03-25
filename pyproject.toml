@@ -1,16 +1,19 @@
 [project]
 name = "lobe"
-version = "0.1.0"
+version = "0.2.0"
 description = "Policy training and serving for limb robot control"
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
-    "lerobot[pi,xvla,wallx]",
+    "lerobot[pi,smolvla]",
     "huggingface-hub",
+    "transformers",
+    "accelerate",
     "wandb",
     "tyro>=1.0.8",
     "loguru>=0.7.3",
-    "torch>=2.7",
-    "torchvision>=0.22",
+    "torch>=2.2",
+    "torchvision",
+    "num2words",
 ]
 
 [project.optional-dependencies]
@@ -19,14 +22,14 @@ serve = [
     "msgpack",
     "msgpack-numpy",
 ]
-ot = [
-    "torchcfm",
-]
 eval = [
     "gym-pusht",
     "pymunk<7",
     "pygame",
     "opencv-python",
+]
+aloha = [
+    "gym-aloha",
 ]
 
 [build-system]
@@ -39,12 +42,15 @@ url = "https://download.pytorch.org/whl/nightly/cu128"
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
+# Override lerobot's torch<2.11 constraint to allow PyTorch nightly (cu128 for RTX 5090)
+override-dependencies = ["torch>=2.2"]
 
 [tool.uv.sources]
 torch = { index = "pytorch-nightly" }
 torchvision = { index = "pytorch-nightly" }
 triton = { index = "pytorch-nightly" }
 torchcodec = { index = "pypi" }
+lerobot = { git = "https://github.com/huggingface/lerobot.git" }
 
 [tool.ruff]
 line-length = 119

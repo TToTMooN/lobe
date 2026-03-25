@@ -6,8 +6,8 @@ Environment-specific timestamp configs live in lobe/envs/.
 
 from __future__ import annotations
 
+from lerobot.datasets.feature_utils import dataset_to_policy_features
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import dataset_to_policy_features
 from loguru import logger
 
 
