@@ -11,10 +11,10 @@ from pathlib import Path
 import torch
 from lerobot.configs.types import FeatureType
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from loguru import logger
 from torch import nn
 
+from lobe.policies.diffusion_wrapper import NormalizedDiffusionPolicy
 from lobe.policies.flow_matching.configuration_flow_matching import FlowMatchingConfig
 from lobe.policies.flow_matching.modeling_flow_matching import FlowMatchingPolicy
 
@@ -70,7 +70,7 @@ def create_policy(
         )
         config.input_features = input_features
         config.output_features = output_features
-        return DiffusionPolicy(config, dataset_stats=stats)
+        return NormalizedDiffusionPolicy(config, dataset_stats=stats)
     else:
         raise ValueError(f"Unknown policy type: {policy_type}. Use 'flow_matching' or 'diffusion'.")
 
