@@ -86,10 +86,13 @@ def main():
     output_dir = args.output_dir or f"checkpoints/{args.model}-{args.dataset.split('/')[-1]}"
 
     # Build lerobot-train command
+    # Use -c wrapper to apply video_compat patch (PyAV) before lerobot imports.
+    # This patches torchvision VideoReader (removed in nightly) with PyAV.
     cmd = [
         sys.executable,
-        "-m",
-        "lerobot.scripts.lerobot_train",
+        "-c",
+        "import sys; sys.argv[0] = 'lerobot-train'; import lobe.video_compat; "
+        "from lerobot.scripts.lerobot_train import main; main()",
         f"--dataset.repo_id={args.dataset}",
         f"--policy.path={policy_path}",
         f"--batch_size={batch_size}",
@@ -104,7 +107,12 @@ def main():
 
     # SmolVLA expects 3 cameras, add rename_map and empty_cameras for single-camera datasets
     if args.model == "smolvla":
-        cmd.append('--rename_map={"observation.image": "observation.images.camera1"}')
+        # Detect which image key the dataset uses and map to camera1
+        # ALOHA datasets use observation.images.top, PushT uses observation.image
+        if "aloha" in args.dataset.lower():
+            cmd.append('--rename_map={"observation.images.top": "observation.images.camera1"}')
+        else:
+            cmd.append('--rename_map={"observation.image": "observation.images.camera1"}')
         cmd.append("--policy.empty_cameras=2")
 
     if args.lr > 0:

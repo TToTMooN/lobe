@@ -41,7 +41,7 @@ def decode_video_frames_pyav(video_path, timestamps, tolerance_s):
             raise ValueError(f"No frame within tolerance {tolerance_s}s of timestamp {ts}s")
         frame = all_frames[idx]
         img = frame.to_ndarray(format="rgb24")
-        matched_frames.append(torch.from_numpy(img).permute(2, 0, 1))  # HWC -> CHW
+        matched_frames.append(torch.from_numpy(img).permute(2, 0, 1).float() / 255.0)  # HWC -> CHW, [0,1]
 
     return torch.stack(matched_frames)
 
