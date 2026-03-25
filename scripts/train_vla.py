@@ -83,7 +83,7 @@ def main():
     policy_path = args.policy_path or preset["policy_path"]
     batch_size = args.batch_size or preset["batch_size"]
     steps = args.steps or preset["steps"]
-    output_dir = args.output_dir or f"checkpoints/{args.model}-{args.dataset.split('/')[-1]}"
+    output_dir = args.output_dir or f"checkpoints/{args.model}-{args.dataset.split('/')[-1]}-{steps // 1000}k"
 
     # Build lerobot-train command
     # Use -c wrapper to apply video_compat patch (PyAV) before lerobot imports.
