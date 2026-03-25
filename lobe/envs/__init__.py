@@ -8,6 +8,7 @@ from types import ModuleType
 ENV_REGISTRY: dict[str, str] = {
     "pusht": "lobe.envs.pusht",
     "yam": "lobe.envs.yam_bimanual",
+    "aloha": "lobe.envs.aloha",
 }
 
 
