@@ -33,6 +33,7 @@ class PolicyConfig:
     # FM-specific
     down_dims: str = "256,512,1024"
     embed_dim: int = 256
+    resize_shape: str = ""  # e.g. "224,224" for ALOHA (empty = no resize)
     crop_ratio: float = 0.8
 
 

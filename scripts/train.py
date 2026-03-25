@@ -57,6 +57,7 @@ def train_one(policy_type: str, cfg: TrainPipelineConfig, dataset, features, env
 
     torch.manual_seed(cfg.train.seed)
     fm_down_dims = tuple(int(x) for x in cfg.policy.down_dims.split(","))
+    resize_shape = tuple(int(x) for x in cfg.policy.resize_shape.split(",")) if cfg.policy.resize_shape else None
     policy = create_policy(
         policy_type,
         features,
@@ -69,6 +70,7 @@ def train_one(policy_type: str, cfg: TrainPipelineConfig, dataset, features, env
         compile_mode=cfg.performance.compile_mode,
         fm_down_dims=fm_down_dims,
         fm_embed_dim=cfg.policy.embed_dim,
+        resize_shape=resize_shape,
     )
     policy.to(cfg.device)
     policy.train()

@@ -40,6 +40,7 @@ def create_policy(
     # FM-specific
     fm_down_dims: tuple[int, ...] = (256, 512, 1024),
     fm_embed_dim: int = 256,
+    resize_shape: tuple[int, int] | None = None,
 ) -> nn.Module:
     """Create a policy from dataset features. Works for any environment.
 
@@ -58,6 +59,7 @@ def create_policy(
             compile_mode=compile_mode,
             down_dims=fm_down_dims,
             diffusion_step_embed_dim=fm_embed_dim,
+            resize_shape=resize_shape,
         )
         config.input_features = input_features
         config.output_features = output_features
