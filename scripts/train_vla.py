@@ -89,7 +89,7 @@ def main():
     cmd = [
         sys.executable,
         "-m",
-        "lerobot.scripts.train",
+        "lerobot.scripts.lerobot_train",
         f"--dataset.repo_id={args.dataset}",
         f"--policy.path={policy_path}",
         f"--batch_size={batch_size}",
@@ -101,6 +101,11 @@ def main():
         f"--policy.repo_id={args.dataset.split('/')[-1]}-{args.model}",
         "--save_checkpoint=true",
     ]
+
+    # SmolVLA expects 3 cameras, add rename_map and empty_cameras for single-camera datasets
+    if args.model == "smolvla":
+        cmd.append('--rename_map={"observation.image": "observation.images.camera1"}')
+        cmd.append("--policy.empty_cameras=2")
 
     if args.lr > 0:
         cmd.append(f"--optimizer.lr={args.lr}")
