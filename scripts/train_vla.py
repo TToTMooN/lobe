@@ -98,6 +98,8 @@ def main():
         f"--eval_freq={args.eval_freq}",
         f"--save_freq={args.save_freq}",
         f"--num_workers={args.num_workers}",
+        f"--policy.repo_id={args.dataset.split('/')[-1]}-{args.model}",
+        "--save_checkpoint=true",
     ]
 
     if args.lr > 0:
