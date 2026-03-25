@@ -15,8 +15,8 @@ from lobe.data.loading import load_lerobot_dataset
 # ALOHA constants
 FPS = 50.0
 N_OBS_STEPS = 1
-HORIZON = 100  # ALOHA uses longer horizons
-N_ACTION_STEPS = 100
+HORIZON = 96  # ALOHA uses longer horizons (must be divisible by 8 for U-Net)
+N_ACTION_STEPS = 96
 ACTION_DIM = 14  # 6 joints + 1 gripper per arm x 2
 MAX_STEPS = 400
 DEFAULT_DATASET = "lerobot/aloha_sim_insertion_human"

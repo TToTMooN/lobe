@@ -227,8 +227,18 @@ def main():
     gpu_name = torch.cuda.get_device_name(0) if device == "cuda" else "CPU"
     logger.info(f"Device: {device} ({gpu_name})")
 
-    # Load env module
+    # Load env module and apply env-specific defaults
     env_module = get_env(cfg.env.name)
+    if hasattr(env_module, "FPS"):
+        cfg.env.fps = env_module.FPS
+    if hasattr(env_module, "N_OBS_STEPS"):
+        cfg.env.n_obs_steps = env_module.N_OBS_STEPS
+    if hasattr(env_module, "HORIZON"):
+        cfg.env.horizon = env_module.HORIZON
+    if hasattr(env_module, "N_ACTION_STEPS"):
+        cfg.env.n_action_steps = env_module.N_ACTION_STEPS
+    if hasattr(env_module, "MAX_STEPS"):
+        cfg.env.max_steps = env_module.MAX_STEPS
     logger.info(f"Environment: {cfg.env.name}")
 
     # Load dataset
