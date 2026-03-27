@@ -218,16 +218,36 @@ def train_one(cfg: TrainPipelineConfig, dataset, features, env_module):
     ckpt_dir = save_checkpoint(policy, output_dir, policy_type, cfg.train.steps, ema)
     logger.info(f"Final checkpoint: {ckpt_dir}")
 
+    elapsed = time.perf_counter() - t0
+    final_loss = sum(losses[-100:]) / min(len(losses), 100)
     meta = {
         "policy": policy_type,
         "env": cfg.env.name,
         "steps": cfg.train.steps,
-        "final_loss": sum(losses[-100:]) / min(len(losses), 100),
+        "final_loss": final_loss,
         "n_params": n_params,
-        "elapsed_s": time.perf_counter() - t0,
+        "elapsed_s": elapsed,
     }
     (ckpt_dir / "meta.json").write_text(json.dumps(meta, indent=2))
-    logger.info(f"Done: {policy_type} | loss: {meta['final_loss']:.6f} | time: {meta['elapsed_s']:.1f}s")
+    logger.info(f"Done: {policy_type} | loss: {final_loss:.6f} | time: {elapsed:.1f}s")
+
+    # Log to experiments.tsv
+    from lobe.experiment_log import log_experiment
+
+    gpu_name = torch.cuda.get_device_name(0) if cfg.device == "cuda" else "CPU"
+    backbone = cfg.policy.backbone if is_fm else ""
+    log_experiment(
+        env=cfg.env.name,
+        policy=policy_type,
+        backbone=backbone,
+        norm="MEAN_STD" if is_fm else "MIN_MAX",
+        steps=cfg.train.steps,
+        batch_size=cfg.train.batch_size,
+        n_params=n_params,
+        final_loss=final_loss,
+        train_s=elapsed,
+        gpu=gpu_name,
+    )
 
     if run:
         run.finish()

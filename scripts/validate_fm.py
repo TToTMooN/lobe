@@ -166,6 +166,26 @@ def run_test(test_id: int, test: dict, args: Args) -> dict:
         success_rate, avg_reward = env_module.evaluate(policy, args.device, n_rollouts=args.eval_rollouts, **kwargs)
         logger.info(f"  Eval: success={success_rate * 100:.0f}%, reward={avg_reward:.3f}")
 
+    # Log to experiments.tsv
+    from lobe.experiment_log import log_experiment
+
+    gpu_name = torch.cuda.get_device_name(0) if args.device == "cuda" else "CPU"
+    log_experiment(
+        env=env_cfg["name"],
+        policy="flow_matching",
+        backbone=test["backbone"],
+        norm=test["norm"],
+        steps=args.steps,
+        batch_size=args.batch_size,
+        n_params=n_params,
+        final_loss=final_loss,
+        success_rate=success_rate,
+        avg_reward=avg_reward,
+        train_s=elapsed,
+        gpu=gpu_name,
+        notes=f"validate_fm test {test_id}",
+    )
+
     return {
         "test_id": test_id,
         "desc": test["desc"],
@@ -178,6 +198,7 @@ def run_test(test_id: int, test: dict, args: Args) -> dict:
         "avg_reward": avg_reward,
         "steps": args.steps,
         "elapsed_s": elapsed,
+        "steps_per_s": args.steps / elapsed if elapsed > 0 else 0,
     }
 
 
@@ -214,10 +235,11 @@ def main():
         if "error" in r:
             logger.info(f"  [{r['test_id']}] {r['desc']}: FAILED — {r['error']}")
         else:
+            sps = r.get("steps_per_s", r["steps"] / r["elapsed_s"] if r["elapsed_s"] > 0 else 0)
             logger.info(
                 f"  [{r['test_id']}] {r['desc']}: "
                 f"success={r['success_rate'] * 100:.0f}% loss={r['final_loss']:.6f} "
-                f"({r['elapsed_s']:.0f}s, {r['n_params']:,} params)"
+                f"| {sps:.1f} steps/s | {r['elapsed_s']:.0f}s | {r['n_params']:,} params"
             )
 
     # Save results
