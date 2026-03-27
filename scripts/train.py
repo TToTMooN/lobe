@@ -49,15 +49,30 @@ def save_checkpoint(policy, output_dir: Path, policy_type: str, step: int, ema=N
     return ckpt_dir
 
 
-def train_one(policy_type: str, cfg: TrainPipelineConfig, dataset, features, env_module):
+def train_one(cfg: TrainPipelineConfig, dataset, features, env_module):
+    from lobe.configs import FMPolicyConfig
+
+    is_fm = isinstance(cfg.policy, FMPolicyConfig)
+    policy_type = "flow_matching" if is_fm else "diffusion"
+
     logger.info(f"{'=' * 60}")
     logger.info(f"Training: {policy_type} | env: {cfg.env.name} | steps: {cfg.train.steps}")
     logger.info(f"bf16={cfg.performance.bf16} | compile={cfg.performance.compile} | batch={cfg.train.batch_size}")
     logger.info(f"{'=' * 60}")
 
     torch.manual_seed(cfg.train.seed)
-    fm_down_dims = tuple(int(x) for x in cfg.policy.down_dims.split(","))
-    resize_shape = tuple(int(x) for x in cfg.policy.resize_shape.split(",")) if cfg.policy.resize_shape else None
+
+    # Build policy from config variant
+    fm_kwargs = {}
+    resize_shape = None
+    if is_fm:
+        fm_kwargs = {
+            "fm_backbone": cfg.policy.backbone,
+            "fm_down_dims": tuple(int(x) for x in cfg.policy.down_dims.split(",")),
+            "fm_embed_dim": cfg.policy.embed_dim,
+        }
+        resize_shape = tuple(int(x) for x in cfg.policy.resize_shape.split(",")) if cfg.policy.resize_shape else None
+
     policy = create_policy(
         policy_type,
         features,
@@ -68,9 +83,8 @@ def train_one(policy_type: str, cfg: TrainPipelineConfig, dataset, features, env
         num_inference_steps=cfg.policy.num_inference_steps,
         compile_model=cfg.performance.compile,
         compile_mode=cfg.performance.compile_mode,
-        fm_down_dims=fm_down_dims,
-        fm_embed_dim=cfg.policy.embed_dim,
         resize_shape=resize_shape,
+        **fm_kwargs,
     )
     policy.to(cfg.device)
     policy.train()
@@ -111,14 +125,15 @@ def train_one(policy_type: str, cfg: TrainPipelineConfig, dataset, features, env
         )
 
     nw = cfg.performance.num_workers
+    gpu_resident = isinstance(dataset, __import__("lobe.data.fast_dataset", fromlist=["FastDataset"]).FastDataset)
     dataloader = DataLoader(
         dataset,
         batch_size=cfg.train.batch_size,
         shuffle=True,
-        num_workers=nw,
-        pin_memory=True,
-        persistent_workers=nw > 0,
-        prefetch_factor=cfg.performance.prefetch_factor if nw > 0 else None,
+        num_workers=0 if gpu_resident else nw,
+        pin_memory=not gpu_resident,
+        persistent_workers=(not gpu_resident) and nw > 0,
+        prefetch_factor=cfg.performance.prefetch_factor if (not gpu_resident) and nw > 0 else None,
         drop_last=True,
     )
     optimizer = torch.optim.AdamW(policy.get_optim_params(), lr=cfg.train.lr, weight_decay=1e-6)
@@ -150,7 +165,10 @@ def train_one(policy_type: str, cfg: TrainPipelineConfig, dataset, features, env
             data_iter = iter(dataloader)
             batch = next(data_iter)
 
-        batch = {k: v.to(cfg.device, non_blocking=True) for k, v in batch.items() if isinstance(v, torch.Tensor)}
+        if gpu_resident:
+            batch = {k: v for k, v in batch.items() if isinstance(v, torch.Tensor)}
+        else:
+            batch = {k: v.to(cfg.device, non_blocking=True) for k, v in batch.items() if isinstance(v, torch.Tensor)}
 
         with torch.autocast("cuda", dtype=amp_dtype, enabled=use_amp):
             loss, _ = policy.forward(batch)
@@ -217,7 +235,9 @@ def train_one(policy_type: str, cfg: TrainPipelineConfig, dataset, features, env
 
 
 def main():
-    cfg = tyro.cli(TrainPipelineConfig)
+    from lobe.configs import PRESETS
+
+    cfg = tyro.extras.overridable_config_cli(PRESETS)
     device = cfg.device if torch.cuda.is_available() and cfg.device == "cuda" else "cpu"
     cfg.device = device
 
@@ -229,37 +249,62 @@ def main():
     gpu_name = torch.cuda.get_device_name(0) if device == "cuda" else "CPU"
     logger.info(f"Device: {device} ({gpu_name})")
 
-    # Load env module and apply env-specific defaults
+    # Load env module and apply env-specific defaults (only where cfg value is 0 = "use default")
     env_module = get_env(cfg.env.name)
     if hasattr(env_module, "FPS"):
         cfg.env.fps = env_module.FPS
-    if hasattr(env_module, "N_OBS_STEPS"):
+    if cfg.env.n_obs_steps == 0 and hasattr(env_module, "N_OBS_STEPS"):
         cfg.env.n_obs_steps = env_module.N_OBS_STEPS
-    if hasattr(env_module, "HORIZON"):
+    if cfg.env.horizon == 0 and hasattr(env_module, "HORIZON"):
         cfg.env.horizon = env_module.HORIZON
-    if hasattr(env_module, "N_ACTION_STEPS"):
+    if cfg.env.n_action_steps == 0 and hasattr(env_module, "N_ACTION_STEPS"):
         cfg.env.n_action_steps = env_module.N_ACTION_STEPS
-    if hasattr(env_module, "MAX_STEPS"):
+    if cfg.env.max_steps == 0 and hasattr(env_module, "MAX_STEPS"):
         cfg.env.max_steps = env_module.MAX_STEPS
-    logger.info(f"Environment: {cfg.env.name}")
+    logger.info(f"Environment: {cfg.env.name} (horizon={cfg.env.horizon}, action_steps={cfg.env.n_action_steps})")
 
-    # Load dataset
-    logger.info(f"Loading dataset: {cfg.env.dataset_repo_id}")
-    dataset, features = env_module.load_dataset(cfg.env.dataset_repo_id)
-    logger.info(f"Dataset: {len(dataset)} frames")
+    # Load dataset — use FastDataset if .pt cache exists, else standard LeRobot
+    repo_id = cfg.env.dataset_repo_id
+    if repo_id.endswith(".pt") and Path(repo_id).exists():
+        from lobe.data.fast_dataset import FastDataset
 
-    if cfg.performance.gpu_preload:
-        from lobe.data.preload import preload_dataset_to_gpu
+        # Build delta_timestamps from cfg values (respecting CLI overrides for horizon/obs_steps)
+        if hasattr(env_module, "delta_timestamps"):
+            dt = env_module.delta_timestamps()
+            # Override action timestamps with cfg horizon
+            fps = cfg.env.fps
+            act_ts = [i / fps for i in range(1 - cfg.env.n_obs_steps, 1 - cfg.env.n_obs_steps + cfg.env.horizon)]
+            dt["action"] = act_ts
+            # Override obs timestamps with cfg n_obs_steps
+            obs_ts = [i / fps for i in range(1 - cfg.env.n_obs_steps, 1)]
+            for k in list(dt.keys()):
+                if k != "action":
+                    dt[k] = obs_ts
+        else:
+            dt = None
+        dataset = FastDataset(repo_id, device=device, delta_timestamps=dt)
+        # Build features from the cache metadata
+        from lerobot.configs.types import FeatureType, PolicyFeature
 
-        dataset = preload_dataset_to_gpu(dataset, device)
+        features = {}
+        # Use raw per-frame shapes (without temporal window dim) — policy handles stacking
+        meta = dataset.meta_info
+        for key, shape in meta.get("features", {}).items():
+            raw_shape = tuple(shape[1:])  # strip N dimension
+            if "image" in key:
+                features[key] = PolicyFeature(type=FeatureType.VISUAL, shape=raw_shape)
+            elif key == "action":
+                features[key] = PolicyFeature(type=FeatureType.ACTION, shape=raw_shape)
+            elif "state" in key:
+                features[key] = PolicyFeature(type=FeatureType.STATE, shape=raw_shape)
+        logger.info(f"Fast dataset: {len(dataset)} frames from {repo_id}")
+    else:
+        logger.info(f"Loading dataset: {repo_id}")
+        dataset, features = env_module.load_dataset(repo_id)
+        logger.info(f"Dataset: {len(dataset)} frames")
 
     # Train
-    policies = [cfg.policy.type]
-    if cfg.policy.type == "both":
-        policies = ["flow_matching", "diffusion"]
-
-    for policy_type in policies:
-        train_one(policy_type, cfg, dataset, features, env_module)
+    train_one(cfg, dataset, features, env_module)
 
 
 if __name__ == "__main__":

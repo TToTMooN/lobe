@@ -31,16 +31,17 @@ def create_policy(
     features: dict,
     stats: dict,
     *,
-    n_obs_steps: int = 2,
+    n_obs_steps: int = 1,
     horizon: int = 16,
     n_action_steps: int = 8,
     num_inference_steps: int = 10,
     compile_model: bool = False,
     compile_mode: str = "reduce-overhead",
+    resize_shape: tuple[int, int] | None = None,
     # FM-specific
+    fm_backbone: str = "transformer",
     fm_down_dims: tuple[int, ...] = (256, 512, 1024),
     fm_embed_dim: int = 256,
-    resize_shape: tuple[int, int] | None = None,
 ) -> nn.Module:
     """Create a policy from dataset features. Works for any environment.
 
@@ -57,6 +58,7 @@ def create_policy(
             num_inference_steps=num_inference_steps,
             compile_model=compile_model,
             compile_mode=compile_mode,
+            backbone=fm_backbone,
             down_dims=fm_down_dims,
             diffusion_step_embed_dim=fm_embed_dim,
             resize_shape=resize_shape,

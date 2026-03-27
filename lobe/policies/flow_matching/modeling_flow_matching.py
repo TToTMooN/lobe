@@ -88,6 +88,14 @@ class FlowMatchingPolicy(PreTrainedPolicy):
         if ACTION in batch:
             batch.pop(ACTION)
 
+        # Resize images to training resolution if needed
+        if self.config.resize_shape is not None and self.config.image_features:
+            batch = dict(batch)
+            h, w = self.config.resize_shape
+            for key in self.config.image_features:
+                if key in batch and batch[key].shape[-2:] != (h, w):
+                    batch[key] = F.interpolate(batch[key], size=(h, w), mode="bilinear", align_corners=False)
+
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)
@@ -132,8 +140,22 @@ class FlowMatchingModel(nn.Module):
         if self.config.env_state_feature:
             global_cond_dim += self.config.env_state_feature.shape[0]
 
-        # Same U-Net — predicts velocity fields instead of noise, architecture is identical
-        self.unet = DiffusionConditionalUnet1d(config, global_cond_dim=global_cond_dim * config.n_obs_steps)
+        # Velocity network — U-Net or Transformer
+        total_cond_dim = global_cond_dim * config.n_obs_steps
+        if config.backbone == "transformer":
+            from lobe.policies.flow_matching.flow_transformer import FlowMatchingTransformer
+
+            self.unet = FlowMatchingTransformer(
+                action_dim=config.action_feature.shape[0],
+                global_cond_dim=total_cond_dim,
+                d_model=config.transformer_d_model,
+                n_heads=config.transformer_n_heads,
+                n_layers=config.transformer_n_layers,
+                dropout=config.transformer_dropout,
+                max_horizon=config.horizon,
+            )
+        else:
+            self.unet = DiffusionConditionalUnet1d(config, global_cond_dim=total_cond_dim)
 
         if config.compile_model:
             self.unet = torch.compile(self.unet, mode=config.compile_mode)

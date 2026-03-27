@@ -48,8 +48,8 @@ class FlowMatchingConfig(PreTrainedConfig):
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MEAN_STD,
-            "STATE": NormalizationMode.MIN_MAX,
-            "ACTION": NormalizationMode.MIN_MAX,
+            "STATE": NormalizationMode.MEAN_STD,
+            "ACTION": NormalizationMode.MEAN_STD,
         }
     )
 
@@ -66,12 +66,21 @@ class FlowMatchingConfig(PreTrainedConfig):
     spatial_softmax_num_keypoints: int = 32
     use_separate_rgb_encoder_per_camera: bool = False
 
-    # U-Net (HRI-EU defaults for flow matching)
+    # Backbone: "unet" (DiffusionConditionalUnet1d) or "transformer" (DiT-style AdaLN)
+    backbone: str = "transformer"
+
+    # U-Net params (used when backbone="unet")
     down_dims: tuple[int, ...] = (256, 512, 1024)
     kernel_size: int = 5
     n_groups: int = 8
     diffusion_step_embed_dim: int = 256
     use_film_scale_modulation: bool = True
+
+    # Transformer params (used when backbone="transformer")
+    transformer_d_model: int = 256
+    transformer_n_heads: int = 4
+    transformer_n_layers: int = 4
+    transformer_dropout: float = 0.1
 
     # Flow matching specific
     sigma: float = 0.0
@@ -118,12 +127,13 @@ class FlowMatchingConfig(PreTrainedConfig):
         if self.crop_shape is not None and (self.crop_shape[0] <= 0 or self.crop_shape[1] <= 0):
             raise ValueError(f"`crop_shape` must have positive dimensions. Got {self.crop_shape}.")
 
-        downsampling_factor = 2 ** len(self.down_dims)
-        if self.horizon % downsampling_factor != 0:
-            raise ValueError(
-                "The horizon should be an integer multiple of the downsampling factor (which is determined "
-                f"by `len(down_dims)`). Got {self.horizon=} and {self.down_dims=}"
-            )
+        if self.backbone == "unet":
+            downsampling_factor = 2 ** len(self.down_dims)
+            if self.horizon % downsampling_factor != 0:
+                raise ValueError(
+                    "The horizon should be an integer multiple of the downsampling factor (which is determined "
+                    f"by `len(down_dims)`). Got {self.horizon=} and {self.down_dims=}"
+                )
 
         if self.num_inference_steps < 1:
             raise ValueError(f"`num_inference_steps` must be >= 1. Got {self.num_inference_steps}.")

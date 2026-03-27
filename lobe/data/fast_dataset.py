@@ -67,6 +67,17 @@ class FastDataset(Dataset):
 
         return item
 
+    class _Meta:
+        """Minimal shim so FastDataset.meta.stats works like LeRobotDataset.meta.stats."""
+
+        def __init__(self, stats):
+            self.stats = stats
+
+    @property
+    def meta(self):
+        """Compatible with LeRobotDataset.meta interface."""
+        return self._Meta(self.meta_info.get("stats", {}))
+
     @property
     def stats(self):
         """Return dataset statistics from metadata."""

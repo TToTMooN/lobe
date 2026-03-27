@@ -1,10 +1,12 @@
 """ALOHA sim environment config -- dataset parameters, constants, gym helpers.
 
-Uses gym_aloha (AlohaInsertion-v0) for simulation evaluation.
+Supports both AlohaInsertion-v0 and AlohaTransferCube-v0.
 ALOHA is a bimanual manipulation platform with 14-dim action space (2x 6-DOF + gripper).
 """
 
 from __future__ import annotations
+
+import os
 
 import numpy as np
 import torch
@@ -20,6 +22,12 @@ N_ACTION_STEPS = 96
 ACTION_DIM = 14  # 6 joints + 1 gripper per arm x 2
 MAX_STEPS = 400
 DEFAULT_DATASET = "lerobot/aloha_sim_insertion_human"
+
+# Task -> gym env mapping
+TASK_ENVS = {
+    "insertion": "gym_aloha/AlohaInsertion-v0",
+    "transfer_cube": "gym_aloha/AlohaTransferCube-v0",
+}
 
 
 def delta_timestamps():
@@ -44,9 +52,19 @@ def obs_to_batch(obs: dict, device: str) -> dict[str, torch.Tensor]:
     return {k: v.to(device) for k, v in processed.items()}
 
 
-def run_rollout(policy, device: str, seed: int = 0, max_steps: int = MAX_STEPS) -> dict:
+def _detect_task(dataset_repo_id: str = "") -> str:
+    """Detect ALOHA task from dataset name or env var."""
+    task = os.environ.get("ALOHA_TASK", "")
+    if not task:
+        if "transfer_cube" in dataset_repo_id:
+            task = "transfer_cube"
+        else:
+            task = "insertion"
+    return task
+
+
+def run_rollout(policy, device: str, seed: int = 0, max_steps: int = MAX_STEPS, task: str = "") -> dict:
     """Run a single ALOHA rollout and return metrics."""
-    import os
     import time
 
     os.environ.setdefault("MUJOCO_GL", "egl")
@@ -54,7 +72,10 @@ def run_rollout(policy, device: str, seed: int = 0, max_steps: int = MAX_STEPS) 
     import gym_aloha  # noqa: F401
     import gymnasium
 
-    env = gymnasium.make("gym_aloha/AlohaInsertion-v0", obs_type="pixels_agent_pos")
+    if not task:
+        task = _detect_task()
+    env_id = TASK_ENVS.get(task, TASK_ENVS["insertion"])
+    env = gymnasium.make(env_id, obs_type="pixels_agent_pos")
     obs, _ = env.reset(seed=seed)
     policy.reset()
 
@@ -82,12 +103,12 @@ def run_rollout(policy, device: str, seed: int = 0, max_steps: int = MAX_STEPS) 
     }
 
 
-def evaluate(policy, device: str, n_rollouts: int = 10, seed: int = 0) -> tuple[float, float]:
+def evaluate(policy, device: str, n_rollouts: int = 10, seed: int = 0, task: str = "") -> tuple[float, float]:
     """Run multiple ALOHA rollouts and return (success_rate, avg_reward)."""
     policy.eval()
     successes, rewards = [], []
     for i in range(n_rollouts):
-        result = run_rollout(policy, device, seed=seed + i)
+        result = run_rollout(policy, device, seed=seed + i, task=task)
         successes.append(result["success"])
         rewards.append(result["avg_reward"])
     return float(np.mean(successes)), float(np.mean(rewards))

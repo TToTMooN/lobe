@@ -1,6 +1,6 @@
 # LOBE — Learning Orchestration, Brain-to-Embodiment
 
-> **First principles: clean, essential, nothing more.** This is a unified library to train and serve policies for [limb](https://github.com/TToTMooN/limb). PushT is well-researched in the open-source community — check existing implementations before reinventing. Focus on what downstream robot deployment actually needs.
+> **First principles: clean, essential, nothing more.** This is a unified library to train and serve policies for [limb](https://github.com/TToTMooN/limb). Check existing implementations before reinventing. Focus on what downstream robot deployment actually needs.
 
 > The motor cortex (frontal **lobe**) learns to control **limb**s.
 
@@ -8,116 +8,128 @@
 
 Policy training and serving companion repo for [limb](https://github.com/TToTMooN/limb).
 limb handles robot control + data collection; LOBE handles policy training + serving.
-Primary use cases: fine-tuning VLA models (X-VLA, pi0.5, WALL-OSS) and serving them over WebSocket/OpenPI.
+Primary use cases: training visuomotor baselines (FM, Diffusion), fine-tuning VLAs (SmolVLA, pi0), and serving them over WebSocket.
 
 ---
 
 ## Architecture
 
 ```
-configs/
-  train_xvla.yaml           # X-VLA fine-tuning config
-  train_pi0.yaml             # pi0/pi0.5 fine-tuning config
-  train_walloss.yaml         # WALL-OSS fine-tuning config
+lobe/
+  configs/                  # Training configs (tyro dataclasses + named presets)
+    base.py                 # Dataclass definitions
+    pusht.py                # PushT presets
+    aloha.py                # ALOHA presets
+  envs/                     # Per-environment constants, data loading, eval
+    pusht.py
+    aloha.py
+    yam_bimanual.py
+  policies/
+    flow_matching/          # Flow Matching policy (transformer + U-Net backbones)
+    diffusion_wrapper.py    # Diffusion Policy (LeRobot wrapper with normalization)
+    normalize.py            # Normalize/Unnormalize (MEAN_STD, MIN_MAX)
+    factory.py              # create_policy(), load_checkpoint()
+  data/
+    fast_dataset.py         # GPU-resident .pt tensor cache
+    loading.py              # LeRobot dataset loading
+  serve.py                  # WebSocket policy server
+  client.py                 # WebSocket client for testing
 scripts/
-  train.sh                   # Training launcher
-  serve_policy.py            # WebSocket policy server (limb connects here)
-datasets/                    # Local LeRobot v2.1 datasets (or use HF Hub)
-checkpoints/                 # Training outputs
-pyproject.toml
+  train.py                  # Main training script (preset subcommands)
+  train_vla.py              # VLA fine-tuning via lerobot-train
+  prepare_dataset.py        # Pre-resize + cache datasets as .pt
+  validate_fm.py            # FM validation across configs
+  eval_pusht_web.py         # Browser-based PushT eval viewer
 ```
 
 ### End-to-End Workflow
 
 1. **Collect data** — on robot machine with limb (teleop + episode recording)
 2. **Convert** — limb's `convert_to_lerobot.py` → LeRobot v2.1 format
-3. **Train** — on GPU machine with lobe (`lerobot-train`)
-4. **Serve** — on GPU machine with lobe (OpenPI or WebSocket server)
+3. **Train** — on GPU machine with lobe (`scripts/train.py` or `scripts/train_vla.py`)
+4. **Serve** — on GPU machine with lobe (WebSocket server)
 5. **Deploy** — on robot machine with limb (connects to policy server)
-
-### Model Matrix
-
-| Model | Params | Training Speed | Best For |
-|-------|--------|---------------|----------|
-| X-VLA | 0.9B | Fast (~2h on 1xA100) | Small datasets (50-200 episodes), quick iteration |
-| pi0.5 | 3B | Medium (~8h on 1xA100) | Best zero-shot transfer from ALOHA, robust |
-| WALL-OSS | ~3B | Medium | MoE architecture, chain-of-thought reasoning |
-
-### Action Space
-
-- All models expect **224x224 RGB images** and **14-dim actions** (6 joints + 1 gripper per arm)
-- YAM bimanual matches ALOHA's action space exactly (2x 6-DOF + gripper = 14 dims)
-- pi0.5 requires a custom OpenPI transform class mapping YAM obs keys -> ALOHA keys
 
 ---
 
 ## Commands
 
 ```bash
-# Train X-VLA (recommended for first experiments)
-uv run lerobot-train \
-  --dataset.repo_id=yourname/yam-red-cube \
-  --policy.path=lerobot/xvla-base \
-  --policy.dtype=bfloat16 \
-  --batch_size=8 \
-  --steps=20000 \
-  --output_dir=checkpoints/xvla-yam-red-cube
+# ── Visuomotor baselines (FM / Diffusion) ──
 
-# Train pi0.5
-uv run lerobot-train \
-  --dataset.repo_id=yourname/yam-red-cube \
-  --policy.path=physical-intelligence/pi0.5 \
-  --policy.dtype=bfloat16 \
-  --steps=20000 \
-  --output_dir=checkpoints/pi05-yam-red-cube
+# Train with named presets (recommended):
+uv run python scripts/train.py pusht-fm                         # PushT + Flow Matching
+uv run python scripts/train.py pusht-fm --train.steps 25000     # override any field
+uv run python scripts/train.py pusht-fm --policy.backbone unet  # switch backbone
+uv run python scripts/train.py aloha-fm-fast                    # ALOHA + pre-cached data
+uv run python scripts/train.py --help                           # list all presets
 
-# Train WALL-OSS
-uv run lerobot-train \
-  --dataset.repo_id=yourname/yam-red-cube \
-  --policy.type=wall_x \
-  --policy.path=x-square-robot/wall-oss-flow \
-  --steps=20000 \
-  --output_dir=checkpoints/walloss-yam-red-cube
+# ── VLA fine-tuning (via lerobot-train) ──
 
-# Serve (OpenPI for pi0/pi0.5)
-openpi serve --checkpoint checkpoints/pi05-yam-red-cube --port 8111
+uv run python scripts/train_vla.py --model smolvla --dataset lerobot/aloha_sim_transfer_cube_human_image
+uv run python scripts/train_vla.py --model smolvla --dataset yourname/yam-data --steps 50000
 
-# Serve (WebSocket for X-VLA/WALL-OSS)
-uv run python scripts/serve_policy.py \
-  --checkpoint checkpoints/xvla-yam-red-cube \
-  --host 0.0.0.0 --port 8000
-```
+# ── Data preparation ──
 
----
+uv run python scripts/prepare_dataset.py lerobot/aloha_sim_insertion_human_image --resize 224
 
-## Development Conventions
+# ── Serving ──
 
-- **Package manager**: `uv` (not pip). Run everything with `uv run --index-strategy unsafe-best-match` (needed for PyTorch nightly index).
-- **Python**: 3.11 exactly
-- **Logging**: `loguru` everywhere — `from loguru import logger`. Never use `print()` or `logging`.
-- **Linter**: `ruff` (line length 119, config in pyproject.toml)
-- **Training framework**: LeRobot (HuggingFace)
-- **Datasets**: LeRobot v2.1 format
-- **Model hub**: HuggingFace Hub for datasets and checkpoints
+uv run python -m lobe.serve --checkpoint checkpoints/pusht_fm/flow_matching_50000 --host 0.0.0.0
 
-### Lint
+# ── Validation ──
 
-```bash
+uv run python scripts/validate_fm.py --tests 1,2,3 --steps 10000   # PushT regression
+uv run python scripts/validate_fm.py --steps 25000                  # full validation
+
+# ── Lint ──
+
 uv run ruff check .
 uv run ruff format .
 ```
 
 ---
 
+## Config System
+
+Pure Python dataclasses with `tyro.extras.overridable_config_cli` (nerfstudio pattern). Presets are subcommands, every field overridable from CLI.
+
+```
+lobe/configs/
+    __init__.py   # merges all env presets into PRESETS dict
+    base.py       # dataclass definitions (EnvConfig, FMPolicyConfig, etc.)
+    pusht.py      # PushT presets
+    aloha.py      # ALOHA presets
+```
+
+**Adding a new env:** create `lobe/configs/myenv.py` with a `PRESETS` dict, add one import to `__init__.py`.
+
+**Adding a new policy:** add dataclass to `base.py`, add to `TrainPipelineConfig.policy` union.
+
+---
+
+## Development Conventions
+
+- **Package manager**: `uv` (not pip)
+- **Python**: >=3.12
+- **Logging**: `loguru` everywhere — `from loguru import logger`. Never `print()` or `logging`.
+- **Linter**: `ruff` (line length 119, config in pyproject.toml)
+- **Training framework**: LeRobot (HuggingFace)
+- **Datasets**: LeRobot v2.1 format (image preferred over video for speed)
+- **Configs**: Python dataclasses + tyro (no YAML)
+- **Shared machine**: always check `nvidia-smi` before launching training
+
+---
+
 ## Key Dependencies
 
 ```
-lerobot[pi,xvla,wallx]  # Training framework with VLA policy support
+lerobot[pi,smolvla]      # Training framework with VLA policy support
 huggingface-hub          # Dataset/checkpoint management
 wandb                    # Experiment tracking
+tyro                     # CLI config parsing
 websockets               # Policy server (serve extra)
 msgpack                  # Wire serialization (serve extra)
-msgpack-numpy            # NumPy array serialization (serve extra)
 ```
 
 Install: `uv sync`

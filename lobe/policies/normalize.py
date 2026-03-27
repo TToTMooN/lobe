@@ -19,6 +19,32 @@ def _to_tensor(x):
     return x.float() if isinstance(x, Tensor) else torch.tensor(x, dtype=torch.float32)
 
 
+def _broadcast_stat(stat: Tensor, target: Tensor) -> Tensor:
+    """Reshape stat to broadcast against target.
+
+    Stats match the feature shape (e.g. (C,) for images, (D,) for state).
+    Target has extra leading dims (batch, time). We reshape stat to align
+    its dims with the trailing dims of target, adding leading 1s.
+
+    Examples:
+        stat (3,) + target (B, T, 3, H, W) -> (1, 1, 3, 1, 1)  [image: C aligns to dim 2]
+        stat (14,) + target (B, T, 14) -> (1, 1, 14)            [state: D aligns to last dim]
+        stat (14,) + target (B, 14) -> (1, 14)                  [action: D aligns to last dim]
+    """
+    # Find where stat's first dim matches in target (scan from the right)
+    n_trailing = 0
+    for i in range(1, target.ndim + 1):
+        if stat.ndim > 0 and target.shape[-i] == stat.shape[0]:
+            n_trailing = i - 1
+            break
+    # Add trailing 1s for spatial dims, then leading 1s for batch/time
+    for _ in range(n_trailing):
+        stat = stat.unsqueeze(-1)
+    while stat.ndim < target.ndim:
+        stat = stat.unsqueeze(0)
+    return stat
+
+
 class Normalize(torch.nn.Module):
     """Normalize features using dataset statistics."""
 
@@ -45,12 +71,12 @@ class Normalize(torch.nn.Module):
             mode = self.normalization_mapping.get(ft.type.value, NormalizationMode.IDENTITY)
             buf_key = key.replace(".", "_")
             if mode == NormalizationMode.MIN_MAX:
-                mn = getattr(self, f"buffer_{buf_key}_min")
-                mx = getattr(self, f"buffer_{buf_key}_max")
+                mn = _broadcast_stat(getattr(self, f"buffer_{buf_key}_min"), batch[key])
+                mx = _broadcast_stat(getattr(self, f"buffer_{buf_key}_max"), batch[key])
                 batch[key] = (batch[key] - mn) / (mx - mn + 1e-8) * 2 - 1
             elif mode == NormalizationMode.MEAN_STD:
-                mean = getattr(self, f"buffer_{buf_key}_mean")
-                std = getattr(self, f"buffer_{buf_key}_std")
+                mean = _broadcast_stat(getattr(self, f"buffer_{buf_key}_mean"), batch[key])
+                std = _broadcast_stat(getattr(self, f"buffer_{buf_key}_std"), batch[key])
                 batch[key] = (batch[key] - mean) / (std + 1e-8)
         return batch
 
@@ -81,11 +107,11 @@ class Unnormalize(torch.nn.Module):
             mode = self.normalization_mapping.get(ft.type.value, NormalizationMode.IDENTITY)
             buf_key = key.replace(".", "_")
             if mode == NormalizationMode.MIN_MAX:
-                mn = getattr(self, f"buffer_{buf_key}_min")
-                mx = getattr(self, f"buffer_{buf_key}_max")
+                mn = _broadcast_stat(getattr(self, f"buffer_{buf_key}_min"), batch[key])
+                mx = _broadcast_stat(getattr(self, f"buffer_{buf_key}_max"), batch[key])
                 batch[key] = (batch[key] + 1) / 2 * (mx - mn + 1e-8) + mn
             elif mode == NormalizationMode.MEAN_STD:
-                mean = getattr(self, f"buffer_{buf_key}_mean")
-                std = getattr(self, f"buffer_{buf_key}_std")
+                mean = _broadcast_stat(getattr(self, f"buffer_{buf_key}_mean"), batch[key])
+                std = _broadcast_stat(getattr(self, f"buffer_{buf_key}_std"), batch[key])
                 batch[key] = batch[key] * (std + 1e-8) + mean
         return batch
