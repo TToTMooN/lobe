@@ -86,6 +86,7 @@ class FlowMatchingConfig(PreTrainedConfig):
     sigma: float = 0.0
     num_inference_steps: int = 10
     ode_solver: str = "euler"  # euler (pi0 standard, fast) | midpoint (2nd-order, more accurate)
+    delta_actions: bool = False  # predict action[t] - action[0] per chunk (better for position control)
     use_optimal_transport: bool = False
     clip_sample: bool = False
     clip_sample_range: float = 1.0

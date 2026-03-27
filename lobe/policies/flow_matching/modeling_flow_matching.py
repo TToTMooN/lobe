@@ -80,7 +80,9 @@ class FlowMatchingPolicy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
         actions = self.flow_matching.generate_actions(batch)
-        actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
+        if not self.config.delta_actions:
+            actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
+        # For delta_actions: raw deltas, anchor added in select_action
         return actions
 
     @torch.no_grad()
@@ -96,6 +98,10 @@ class FlowMatchingPolicy(PreTrainedPolicy):
                 if key in batch and batch[key].shape[-2:] != (h, w):
                     batch[key] = F.interpolate(batch[key], size=(h, w), mode="bilinear", align_corners=False)
 
+        # Store raw state for delta action anchor before normalization
+        if self.config.delta_actions and OBS_STATE in batch:
+            self._raw_state = batch[OBS_STATE].clone()
+
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)
@@ -104,17 +110,27 @@ class FlowMatchingPolicy(PreTrainedPolicy):
 
         if len(self._queues[ACTION]) == 0:
             actions = self.predict_action_chunk(batch)
+            if self.config.delta_actions:
+                # Add raw current state as anchor (state ≈ action[0] for position control)
+                action_dim = self.config.action_feature.shape[0]
+                anchor = self._raw_state[:, :action_dim]  # stored before normalization
+                actions = actions + anchor.unsqueeze(1)  # (B, n_action_steps, D)
             self._queues[ACTION].extend(actions.transpose(0, 1))
 
         action = self._queues[ACTION].popleft()
         return action
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, None]:
+        # Delta actions: convert to per-chunk deltas (skip action normalization — deltas are centered at 0)
+        if self.config.delta_actions:
+            batch = dict(batch)
+            batch[ACTION] = batch[ACTION] - batch[ACTION][:, 0:1, :]
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)
             batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
-        batch = self.normalize_targets(batch)
+        if not self.config.delta_actions:
+            batch = self.normalize_targets(batch)
         loss = self.flow_matching.compute_loss(batch)
         return loss, None
 

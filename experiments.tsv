@@ -1,0 +1,4 @@
+timestamp	env	policy	backbone	norm	steps	batch_size	n_params	final_loss	success_rate	avg_reward	train_s	steps_per_s	samples_per_s	gpu	notes
+2026-03-27 13:25	aloha	flow_matching	transformer	MEAN_STD	100	256	15569326	1.049938	0.0%	0.001	403	0.2	64	NVIDIA H100 PCIe	validate_fm test 4
+2026-03-27 13:52	aloha	flow_matching	transformer	MEAN_STD	25000	256	15569326	0.046307	0.0%	0.000	1418	17.6	4513	NVIDIA H100 PCIe	
+2026-03-27 13:58	aloha_transfer_cube	flow_matching	transformer	MEAN_STD	25000	256	15569326	0.046000	0.0%	0.000	1418	17.6	4513	H100	v2: MEAN_STD norm + transformer backbone

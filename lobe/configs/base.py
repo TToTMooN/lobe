@@ -30,6 +30,7 @@ class FMPolicyConfig:
     backbone: str = "transformer"  # transformer | unet
     num_inference_steps: int = 10
     ode_solver: str = "euler"  # euler | midpoint
+    delta_actions: bool = False  # predict action[t] - action[0] per chunk (better for position control)
     down_dims: str = "256,512,1024"  # U-Net channel dims (ignored for transformer)
     embed_dim: int = 256
     resize_shape: str = ""  # e.g. "224,224" for ALOHA

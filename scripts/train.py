@@ -70,6 +70,7 @@ def train_one(cfg: TrainPipelineConfig, dataset, features, env_module):
             "fm_backbone": cfg.policy.backbone,
             "fm_down_dims": tuple(int(x) for x in cfg.policy.down_dims.split(",")),
             "fm_embed_dim": cfg.policy.embed_dim,
+            "fm_delta_actions": cfg.policy.delta_actions,
         }
         resize_shape = tuple(int(x) for x in cfg.policy.resize_shape.split(",")) if cfg.policy.resize_shape else None
 
