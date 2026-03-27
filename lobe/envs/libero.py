@@ -17,7 +17,7 @@ N_ACTION_STEPS = 8
 ACTION_DIM = 7  # 6 DOF + gripper
 STATE_DIM = 8  # 7 + gripper state
 MAX_STEPS = 300
-DEFAULT_DATASET = "lerobot/libero_10_image"
+DEFAULT_DATASET = "HuggingFaceVLA/libero"
 
 
 def delta_timestamps():
@@ -26,7 +26,7 @@ def delta_timestamps():
     act_ts = [i / FPS for i in range(1 - N_OBS_STEPS, 1 - N_OBS_STEPS + HORIZON)]
     return {
         "observation.images.image": obs_ts,
-        "observation.images.wrist_image": obs_ts,
+        "observation.images.image2": obs_ts,
         "observation.state": obs_ts,
         "action": act_ts,
     }

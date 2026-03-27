@@ -105,15 +105,21 @@ def main():
         "--save_checkpoint=true",
     ]
 
-    # SmolVLA expects 3 cameras, add rename_map and empty_cameras for single-camera datasets
+    # SmolVLA expects camera1/camera2/camera3 — remap dataset image keys
     if args.model == "smolvla":
-        # Detect which image key the dataset uses and map to camera1
-        # ALOHA datasets use observation.images.top, PushT uses observation.image
-        if "aloha" in args.dataset.lower():
-            cmd.append('--rename_map={"observation.images.top": "observation.images.camera1"}')
-        else:
+        if "libero" in args.dataset.lower():
+            # LIBERO: 2 cameras (image + image2) → camera1 + camera2, 1 empty
+            cmd.append(
+                '--rename_map={"observation.images.image": "observation.images.camera1",'
+                ' "observation.images.image2": "observation.images.camera2"}'
+            )
+            cmd.append("--policy.empty_cameras=1")
+        elif "pusht" in args.dataset.lower():
             cmd.append('--rename_map={"observation.image": "observation.images.camera1"}')
-        cmd.append("--policy.empty_cameras=2")
+            cmd.append("--policy.empty_cameras=2")
+        else:
+            # Generic single-camera fallback
+            cmd.append("--policy.empty_cameras=2")
 
     if args.lr > 0:
         cmd.append(f"--optimizer.lr={args.lr}")

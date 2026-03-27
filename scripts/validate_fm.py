@@ -58,7 +58,7 @@ ENV_CONFIGS = {
     },
     "libero": {
         "name": "libero",
-        "dataset": "lerobot/libero_10_image",
+        "dataset": "HuggingFaceVLA/libero",
         "horizon": 16,
         "n_action_steps": 8,
         "n_obs_steps": 1,
