@@ -35,14 +35,14 @@ TESTS = {
     4: {
         "backbone": "transformer",
         "norm": "MEAN_STD",
-        "env": "aloha_tc",
-        "desc": "transformer+MEAN_STD on ALOHA transfer_cube",
+        "env": "libero",
+        "desc": "transformer+MEAN_STD on LIBERO-10",
     },
     5: {
         "backbone": "unet",
         "norm": "MEAN_STD",
-        "env": "aloha_tc",
-        "desc": "unet+MEAN_STD on ALOHA transfer_cube",
+        "env": "libero",
+        "desc": "unet+MEAN_STD on LIBERO-10",
     },
 }
 
@@ -56,14 +56,14 @@ ENV_CONFIGS = {
         "resize_shape": None,
         "eval_task": "",
     },
-    "aloha_tc": {
-        "name": "aloha",
-        "dataset": "lerobot/aloha_sim_transfer_cube_human_image",
+    "libero": {
+        "name": "libero",
+        "dataset": "lerobot/libero_10_image",
         "horizon": 16,
         "n_action_steps": 8,
         "n_obs_steps": 1,
         "resize_shape": (224, 224),
-        "eval_task": "transfer_cube",
+        "eval_task": "",
     },
 }
 

@@ -11,7 +11,6 @@ Adding a new policy type:
 """
 
 # Import per-env presets and merge
-from lobe.configs.aloha import PRESETS as ALOHA_PRESETS
 from lobe.configs.base import (
     DiffusionPolicyConfig,
     EnvConfig,
@@ -25,7 +24,7 @@ from lobe.configs.base import (
 from lobe.configs.libero import PRESETS as LIBERO_PRESETS
 from lobe.configs.pusht import PRESETS as PUSHT_PRESETS
 
-PRESETS: dict[str, tuple[str, TrainPipelineConfig]] = {**PUSHT_PRESETS, **ALOHA_PRESETS, **LIBERO_PRESETS}
+PRESETS: dict[str, tuple[str, TrainPipelineConfig]] = {**PUSHT_PRESETS, **LIBERO_PRESETS}
 
 __all__ = [
     "EnvConfig",

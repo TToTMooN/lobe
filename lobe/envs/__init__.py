@@ -9,7 +9,6 @@ ENV_REGISTRY: dict[str, str] = {
     "pusht": "lobe.envs.pusht",
     "libero": "lobe.envs.libero",
     "yam": "lobe.envs.yam_bimanual",
-    "aloha": "lobe.envs.aloha",
 }
 
 
