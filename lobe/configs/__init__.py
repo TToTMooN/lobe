@@ -22,9 +22,10 @@ from lobe.configs.base import (
     TrainPipelineConfig,
     WandbConfig,
 )
+from lobe.configs.libero import PRESETS as LIBERO_PRESETS
 from lobe.configs.pusht import PRESETS as PUSHT_PRESETS
 
-PRESETS: dict[str, tuple[str, TrainPipelineConfig]] = {**PUSHT_PRESETS, **ALOHA_PRESETS}
+PRESETS: dict[str, tuple[str, TrainPipelineConfig]] = {**PUSHT_PRESETS, **ALOHA_PRESETS, **LIBERO_PRESETS}
 
 __all__ = [
     "EnvConfig",
