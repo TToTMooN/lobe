@@ -82,7 +82,21 @@ def run_test(test_id: int, test: dict, args: Args) -> dict:
     env_module = get_env(env_cfg["name"])
 
     logger.info(f"Loading dataset: {env_cfg['dataset']}")
-    dataset, features = env_module.load_dataset(env_cfg["dataset"])
+    # Build delta_timestamps matching our horizon/n_obs_steps (not env defaults)
+    fps = env_module.FPS if hasattr(env_module, "FPS") else 10.0
+    n_obs = env_cfg["n_obs_steps"]
+    horizon = env_cfg["horizon"]
+    dt = env_module.delta_timestamps()
+    # Override action timestamps with our horizon
+    dt["action"] = [i / fps for i in range(1 - n_obs, 1 - n_obs + horizon)]
+    # Override obs timestamps with our n_obs_steps
+    obs_ts = [i / fps for i in range(1 - n_obs, 1)]
+    for k in list(dt.keys()):
+        if k != "action":
+            dt[k] = obs_ts
+    from lobe.data.loading import load_lerobot_dataset
+
+    dataset, features = load_lerobot_dataset(env_cfg["dataset"], dt)
 
     # Override normalization if needed
     norm_mode = NormalizationMode.MEAN_STD if test["norm"] == "MEAN_STD" else NormalizationMode.MIN_MAX
@@ -224,7 +238,9 @@ def main():
             result = run_test(tid, test, args)
             results.append(result)
         except Exception as e:
-            logger.error(f"Test {tid} FAILED: {e}")
+            import traceback
+
+            logger.error(f"Test {tid} FAILED: {e}\n{traceback.format_exc()}")
             results.append({"test_id": tid, "desc": test["desc"], "error": str(e)})
 
     # Summary
