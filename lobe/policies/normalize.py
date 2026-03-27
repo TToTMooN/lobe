@@ -20,26 +20,12 @@ def _to_tensor(x):
 
 
 def _broadcast_stat(stat: Tensor, target: Tensor) -> Tensor:
-    """Reshape stat to broadcast against target.
+    """Reshape stat to broadcast against target — prepend leading 1s.
 
-    Stats match the feature shape (e.g. (C,) for images, (D,) for state).
-    Target has extra leading dims (batch, time). We reshape stat to align
-    its dims with the trailing dims of target, adding leading 1s.
-
-    Examples:
-        stat (3,) + target (B, T, 3, H, W) -> (1, 1, 3, 1, 1)  [image: C aligns to dim 2]
-        stat (14,) + target (B, T, 14) -> (1, 1, 14)            [state: D aligns to last dim]
-        stat (14,) + target (B, 14) -> (1, 14)                  [action: D aligns to last dim]
+    Stat is assumed to already match the trailing dims of target
+    (e.g. (3, 1, 1) for images, (14,) for state). We just prepend
+    enough leading 1s so ndims match, then PyTorch broadcasting handles the rest.
     """
-    # Find where stat's first dim matches in target (scan from the right)
-    n_trailing = 0
-    for i in range(1, target.ndim + 1):
-        if stat.ndim > 0 and target.shape[-i] == stat.shape[0]:
-            n_trailing = i - 1
-            break
-    # Add trailing 1s for spatial dims, then leading 1s for batch/time
-    for _ in range(n_trailing):
-        stat = stat.unsqueeze(-1)
     while stat.ndim < target.ndim:
         stat = stat.unsqueeze(0)
     return stat
