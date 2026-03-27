@@ -55,8 +55,9 @@ class FlowMatchingConfig(PreTrainedConfig):
 
     drop_n_last_frames: int = 7
 
-    # Vision backbone (same as diffusion)
+    # Vision backbone
     vision_backbone: str = "resnet18"
+    vision_encoder: str = "spatial_softmax"  # spatial_softmax (64-d) | global_pool (512-d, matches VITA)
     resize_shape: tuple[int, int] | None = None
     crop_ratio: float = 0.8
     crop_shape: tuple[int, int] | None = None

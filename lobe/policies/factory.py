@@ -40,6 +40,7 @@ def create_policy(
     resize_shape: tuple[int, int] | None = None,
     # FM-specific
     fm_backbone: str = "transformer",
+    fm_vision_encoder: str = "spatial_softmax",
     fm_down_dims: tuple[int, ...] = (256, 512, 1024),
     fm_embed_dim: int = 256,
     fm_delta_actions: bool = False,
@@ -60,6 +61,7 @@ def create_policy(
             compile_model=compile_model,
             compile_mode=compile_mode,
             backbone=fm_backbone,
+            vision_encoder=fm_vision_encoder,
             down_dims=fm_down_dims,
             diffusion_step_embed_dim=fm_embed_dim,
             resize_shape=resize_shape,

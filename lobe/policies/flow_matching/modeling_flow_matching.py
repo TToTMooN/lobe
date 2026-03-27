@@ -142,11 +142,18 @@ class FlowMatchingModel(nn.Module):
         super().__init__()
         self.config = config
 
-        # Build observation encoders — identical to DiffusionModel
+        # Build observation encoders
         global_cond_dim = self.config.robot_state_feature.shape[0]
         if self.config.image_features:
             num_images = len(self.config.image_features)
-            if self.config.use_separate_rgb_encoder_per_camera:
+            if getattr(self.config, "vision_encoder", "spatial_softmax") == "global_pool":
+                from lobe.policies.flow_matching.vision_encoder import ResNetPoolEncoder
+
+                resize = self.config.resize_shape
+                crop = self.config.crop_shape
+                self.rgb_encoder = ResNetPoolEncoder(resize_shape=resize, crop_shape=crop)
+                global_cond_dim += self.rgb_encoder.feature_dim * num_images
+            elif self.config.use_separate_rgb_encoder_per_camera:
                 encoders = [DiffusionRgbEncoder(config) for _ in range(num_images)]
                 self.rgb_encoder = nn.ModuleList(encoders)
                 global_cond_dim += encoders[0].feature_dim * num_images

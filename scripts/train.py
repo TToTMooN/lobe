@@ -68,6 +68,7 @@ def train_one(cfg: TrainPipelineConfig, dataset, features, env_module):
     if is_fm:
         fm_kwargs = {
             "fm_backbone": cfg.policy.backbone,
+            "fm_vision_encoder": cfg.policy.vision_encoder,
             "fm_down_dims": tuple(int(x) for x in cfg.policy.down_dims.split(",")),
             "fm_embed_dim": cfg.policy.embed_dim,
             "fm_delta_actions": cfg.policy.delta_actions,

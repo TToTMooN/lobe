@@ -28,6 +28,7 @@ class FMPolicyConfig:
     """Flow Matching policy — transformer or U-Net backbone."""
 
     backbone: str = "transformer"  # transformer | unet
+    vision_encoder: str = "spatial_softmax"  # spatial_softmax (64-d) | global_pool (512-d, VITA-style)
     num_inference_steps: int = 10
     ode_solver: str = "euler"  # euler | midpoint
     delta_actions: bool = False  # predict action[t] - action[0] per chunk (better for position control)
