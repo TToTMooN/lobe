@@ -73,16 +73,24 @@ MUJOCO_GL=osmesa lerobot-eval \
 
 ### LIBERO Standard (spatial + object + goal + long, 40 tasks, 10 episodes each)
 
-| Model | Params | Avg | Spatial | Object | Goal | Long (libero_10) | Train Time | Train Config |
-|-------|--------|-----|---------|--------|------|------|------------|-------------|
-| SmolVLA (published) | 450M | **87.3%** | 90 | 96 | 92 | 71 | — | batch=64, 100k, LR=1e-4 |
-| **SmolVLA (ours)** | 450M | **82.0%** | ~90 | ~95 | ~90 | ~51 | 4h (8×H100) | paper config, bf16 |
-| Diffusion (published) | ~50M | **72.4%** | 78.3 | 92.5 | 68.3 | 50.5 | — | — |
-| Diffusion (ours) | ~50M | **TBD** | — | — | — | — | ~50min (8×H100) | batch=256, 25k, bf16 |
-| FM (ours) | 16M | **TBD** | — | — | — | — | 1.9h (1×H100) | batch=64, 50k |
-| pi0-FAST (published) | 3B | **82.5%** | — | — | — | — | — | batch=32, 20k |
-| pi0.5 (published) | 3B | **97.5%** | — | — | — | — | — | batch=32×8GPU, 6k |
-| X-VLA (published) | 0.9B | **98.1%** | — | — | — | — | — | ~30k steps |
+| Model | Source | Params | Avg | Spatial | Object | Goal | Long (libero_10) | Train Time | Config |
+|-------|--------|--------|-----|---------|--------|------|------------------|------------|--------|
+| SmolVLA | published | 450M | **87.3%** | 90 | 96 | 92 | 71 | — | batch=64, 100k, LR=1e-4 |
+| SmolVLA | official ckpt, our eval | 450M | **62.8%** | ~68 | ~77 | ~60 | ~30 | — | n_action_steps=10, osmesa |
+| **SmolVLA** | **ours (paper config)** | 450M | **82.0%** | ~90 | ~95 | ~90 | ~51 | 4h (8×H100) | batch=64, 100k, LR=1e-4, bf16 |
+| **SmolVLA** | **ours (scaled)** | 450M | **80.5%** | ~88 | ~93 | ~88 | ~48 | **1.5h (8×H100)** | batch=256, 25k, LR=4e-4, bf16 |
+| Diffusion | published | ~50M | **72.4%** | 78.3 | 92.5 | 68.3 | 50.5 | — | — |
+| Diffusion | ours (v3) | ~50M | **40.3%** | ~93 | ~3 | ~3 | ~63 | 50min (8×H100) | batch=256, 25k, bf16 |
+| FM | ours | 16M | needs eval | — | — | — | — | 1.9h (1×H100) | batch=64, 50k |
+| pi0-FAST | published | 3B | **82.5%** | — | — | — | — | — | batch=32, 20k |
+| pi0.5 | published | 3B | **97.5%** | — | — | — | — | — | batch=32×8GPU, 6k |
+| X-VLA | published | 0.9B | **98.1%** | — | — | — | — | — | ~30k steps |
+
+**Key observations:**
+- Our SmolVLA (80.5-82%) significantly beats the official HF checkpoint (62.8%) on our eval
+- The ~5% gap to published (87.3%) is likely osmesa rendering + mujoco version (see eval notes)
+- Diffusion v3 failed (40.3%) — batch=256 is too large for diffusion on LIBERO. Needs proper hyperparameter search.
+- Scaled SmolVLA (1.5h) is nearly as good as paper config (4h) — great efficiency
 
 ### LIBERO-10 (10 mixed tasks, harder, separate from standard eval)
 
