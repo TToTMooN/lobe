@@ -1,0 +1,114 @@
+# LOBE Benchmarks
+
+Standardized evaluation protocol for all policies. When adding a new method, check this doc to know exactly what dataset to train on, what suites to eval on, and what numbers to compare against.
+
+---
+
+## Environments
+
+### PushT (2D, quick sanity check)
+- **Task**: Push a T-shaped block to a target pose
+- **Metric**: IoU (Intersection over Union) with target
+- **Dataset**: `lerobot/pusht` (25k frames)
+- **Obs**: 96×96 top-down image + agent position
+- **Action**: 2D (dx, dy)
+- **Use for**: Quick iteration, sanity-checking new policy implementations (<10 min to train)
+
+### LIBERO (7-DOF manipulation, primary benchmark)
+- **Task**: 130 tasks across 5 suites, 7-DOF Franka robot
+- **Dataset**: `HuggingFaceVLA/libero` (273k frames, 1693 episodes, 2 cameras at 256×256)
+- **Obs**: 2 camera images (agentview + eye-in-hand) + robot state (8-dim: eef_pos + axis_angle + gripper)
+- **Action**: 7-dim (6 DOF + gripper)
+- **Rendering**: `MUJOCO_GL=osmesa` on headless servers (EGL requires matching NVIDIA driver)
+- **Use for**: Primary benchmark. All methods must report numbers here.
+
+#### LIBERO Eval Suites
+
+**IMPORTANT**: The published SmolVLA/pi0 numbers (87.3%, 82.5%, etc.) are averages over 4 suites: spatial + object + goal + long. NOT libero_10.
+
+| Suite | Tasks | Description | Difficulty |
+|-------|-------|-------------|------------|
+| `libero_spatial` | 10 | Same objects, different spatial arrangements | Easy |
+| `libero_object` | 10 | Different objects, same spatial layout | Easy-Medium |
+| `libero_goal` | 10 | Same objects/layout, different goals | Medium |
+| `libero_long` | 10 | Long-horizon multi-step tasks | Hard |
+| `libero_10` | 10 | Mixed difficulty from all suites | Hard |
+
+**Standard eval (for paper comparison)**: `libero_spatial,libero_object,libero_goal,libero_long`
+**Extended eval (harder)**: add `libero_10` for 50 total tasks
+
+#### LIBERO Eval Command Template
+```bash
+MUJOCO_GL=osmesa lerobot-eval \
+  --policy.path=<checkpoint> \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_long \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --policy.n_action_steps=<see per-policy notes>
+```
+
+#### Per-Policy Eval Notes
+| Policy | n_action_steps | rename_map needed? | Notes |
+|--------|---------------|-------------------|-------|
+| SmolVLA | 10 | Yes (image→camera1, image2→camera2) | 1 gave worse results (41% vs 54%) |
+| Diffusion | default (use checkpoint config) | No | — |
+| pi0 | 10 | TBD | Per OpenPI docs |
+| FM (ours) | N/A | N/A | Needs custom eval (not lerobot-eval compatible) |
+
+---
+
+## Training Datasets
+
+| Dataset | Repo ID | Frames | Episodes | Cameras | Resolution | Notes |
+|---------|---------|--------|----------|---------|------------|-------|
+| PushT | `lerobot/pusht` | 25k | — | 1 | 96×96 | 2D top-down |
+| LIBERO | `HuggingFaceVLA/libero` | 273k | 1,693 | 2 | 256×256 | Image format (PNG in parquet) |
+
+**Data loading optimization**: We patched `lerobot_dataset.py:_query_hf_dataset` to bypass `set_transform` for non-image columns. Without this, querying 50-step action chunks decodes 100 throwaway PNG images per sample (12× slower).
+
+---
+
+## Results
+
+### LIBERO Standard (spatial + object + goal + long, 40 tasks, 10 episodes each)
+
+| Model | Params | Avg | Spatial | Object | Goal | Long | Train Time | Train Config |
+|-------|--------|-----|---------|--------|------|------|------------|-------------|
+| SmolVLA (published) | 450M | **87.3%** | 90 | 96 | 92 | 71 | — | batch=64, 100k, LR=1e-4 |
+| **SmolVLA (ours)** | 450M | **TBD** | — | — | — | — | 4h (8×H100) | paper config, bf16 |
+| Diffusion (published) | ~50M | **72.4%** | 78.3 | 92.5 | 68.3 | 50.5 | — | — |
+| Diffusion (ours) | ~50M | **TBD** | — | — | — | — | ~50min (8×H100) | batch=256, 25k, bf16 |
+| FM (ours) | 16M | **TBD** | — | — | — | — | 1.9h (1×H100) | batch=64, 50k |
+| pi0-FAST (published) | 3B | **82.5%** | — | — | — | — | — | batch=32, 20k |
+| pi0.5 (published) | 3B | **97.5%** | — | — | — | — | — | batch=32×8GPU, 6k |
+| X-VLA (published) | 0.9B | **98.1%** | — | — | — | — | — | ~30k steps |
+
+### LIBERO-10 (10 mixed tasks, harder, separate from standard eval)
+
+| Model | Success | Notes |
+|-------|---------|-------|
+| SmolVLA (ours) | 51% | n_action_steps=1 |
+| SmolVLA (ours, scaled) | 54% | n_action_steps=10, batch=256, LR=4e-4 |
+| SmolVLA (official HF) | 41-44% | Known community reproduction gap |
+
+### PushT
+
+| Model | IoU / Success | Steps | Notes |
+|-------|--------------|-------|-------|
+| FM (transformer) | ~40% | 10k | Quick sanity check |
+| FM (unet) | ~60% | 10k | Better backbone for PushT |
+| Diffusion (published) | ~91% IoU | 50k | Gold standard |
+
+---
+
+## Adding a New Method
+
+When benchmarking a new policy on LIBERO:
+1. **Train** on `HuggingFaceVLA/libero` (273k frames)
+2. **Eval** on `libero_spatial,libero_object,libero_goal,libero_long` (standard 4 suites)
+3. **Report** per-suite breakdown + average (compare to table above)
+4. **Log** to `experiments.tsv` with training config details
+5. **Optional**: also eval on `libero_10` for extended comparison
+
+Match total training samples (~6.4M) for fair comparison unless the method's paper specifies otherwise.
