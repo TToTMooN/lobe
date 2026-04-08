@@ -27,36 +27,50 @@
 
 See `.claude/projects/-home-lingfeng-playground-lobe/memory/MEMORY.md` for detailed agent memory (project state, lessons learned, user preferences).
 
-### Verified results
-- FM on PushT: 40% (transformer, 10k steps), 60% (unet, 10k steps) — both backbones work
-- SmolVLA on LIBERO-10: **51%** (paper config, 100k steps, batch=64) — beats official HF checkpoint (41%)
-- Official SmolVLA checkpoint: **41%** on our eval (published 87.3%) — known community reproduction gap
-- Training optimizations: data loading fix (12x), bf16 (3x), persistent_workers — total 8x speedup
+### LIBERO Benchmark Results
+
+#### Eval Results (osmesa rendering, `--eval.n_episodes=10` per task)
+| Model | Params | All-Suite (40 tasks) | LIBERO-10 | Training Time | Steps/s | Notes |
+|-------|--------|---------------------|-----------|---------------|---------|-------|
+| **SmolVLA (ours)** | 450M (100M learnable) | **82.0%** | 51% | 4h (8×H100) | 7.0 | Paper config, bf16 |
+| SmolVLA (official HF) | 450M | — | 41% | — | — | Known reproduction gap |
+| SmolVLA (published) | 450M | 87.3% | — | — | — | Paper reference |
+| Diffusion v2 (ours) | — | training... | — | ~11h (8×H100) | ~8 | batch=256, 200k steps |
+| Diffusion v1 (ours) | — | 25.9% | — | 3.5h | 4.0 | FAILED: batch=512 too big |
+| Diffusion (published) | — | 72.4% | — | — | — | Paper reference |
+| FM (ours) | 16M | needs eval | — | 1.9h (1×H100) | 7.3 | loss=0.177, 50k steps |
+| pi0-FAST (published) | 3B | 82.5% | — | — | — | batch=32, 20k steps |
+| pi0.5 (published) | 3B | 97.5% | — | — | — | batch=32×8GPU, 6k steps |
+| X-VLA (published) | 0.9B | 98.1% | — | — | — | ~30k steps |
+
+#### Training Speed Benchmarks (8×H100, LIBERO dataset)
+| Model | Batch/GPU | Eff. Batch | updt_s | data_s | Steps/s | Samples/s | GPU Mem | Notes |
+|-------|-----------|-----------|--------|--------|---------|-----------|---------|-------|
+| SmolVLA (no opt) | 8 | 64 | 0.503 | 0.004 | 2.0 | 128 | 6GB | No bf16, no data fix |
+| SmolVLA (bf16) | 8 | 64 | 0.163 | 0.134 | 2.0 | 128 | 6GB | bf16, data bottleneck |
+| SmolVLA (bf16+fix) | 32 | 256 | 0.212 | 0.011 | 4.4 | 1126 | 12GB | **Best: bf16+data fix** |
+| SmolVLA (bf16+fix) | 64 | 512 | 0.369 | 0.019 | 2.6 | 1311 | 22GB | Max throughput |
+| Diffusion (bf16+fix) | 32 | 256 | 0.093 | 0.035 | ~8 | ~2048 | 14GB | Currently training |
+
+#### Key Optimizations Applied
+1. **Data loading fix (12×)**: Bypass HF datasets `set_transform` for non-image columns — avoids decoding 100 throwaway PNGs per action-chunk query
+2. **bf16 mixed precision (3×)**: `--mixed_precision bf16` via accelerate
+3. **persistent_workers + prefetch_factor=4**: Eliminates worker respawn overhead
+4. **Lesson learned**: Always match published effective batch size, or scale LR proportionally (linear rule)
 
 ### Current Plan (in priority order — ALWAYS have something running)
-1. **FM on LIBERO** — train our FM policy on LIBERO, eval on all suites
-   - Command: `uv run python scripts/train.py libero-fm --performance.no-compile`
-   - Diffusion Policy baseline: 72.4% (published)
-   - This tests our core FM implementation on real manipulation
-2. **Full LIBERO benchmark** — eval SmolVLA on ALL suites (spatial, object, goal, 10), not just libero_10
-   - Eval command: `lerobot-eval --env.type=libero --env.task=libero_spatial,libero_object,libero_goal,libero_10`
-   - Generate comparison table vs published baselines
-3. **LeRobot Diffusion Policy on LIBERO** — reproduce the 72.4% baseline
-   - `lerobot-train --policy.type=diffusion --dataset.repo_id=HuggingFaceVLA/libero`
-4. **Mujoco downgrade + re-eval** — try mujoco==3.3.2 to close the SmolVLA eval gap
-5. **More methods** — research and implement the best VLA methods for LIBERO (pi0, XVLA, etc.)
+1. ~~FM on LIBERO~~ ✓ trained (loss=0.177), needs eval implementation
+2. ~~SmolVLA full benchmark~~ ✓ 82.0% across all suites
+3. **Diffusion v2 on LIBERO** — running now (batch=256, 200k steps, ~11h)
+4. **FM eval on LIBERO** — implement sim evaluate() for our FM policy
+5. **Mujoco downgrade + re-eval** — try mujoco==3.3.2 to close SmolVLA eval gap
+6. **More methods** — pi0, XVLA, ACT on LIBERO
 
 ### Eval notes
-- Use `MUJOCO_GL=osmesa` (EGL broken due to driver version mismatch)
+- Use `MUJOCO_GL=osmesa` (EGL broken due to NVIDIA driver version mismatch)
 - Use `--policy.n_action_steps=10` for SmolVLA (1 gave worse results)
 - Use `--eval.batch_size=1 --eval.n_episodes=10` per task
 - Output dir on SSD: `/mnt/localssd/sunlingfeng/checkpoints/`
-
-### Published LIBERO baselines (target numbers)
-| Model | Params | Avg Success | Config |
-|-------|--------|-------------|--------|
-| Diffusion Policy | - | 72.4% | - |
-| SmolVLA | 0.45B | 87.3% | batch=64, 100k steps |
 | pi0-FAST | 3B | 82.5% | batch=32, 20k steps |
 | pi0.5 | 3B | 97.5% | batch=32x8GPU, 6k steps |
 | X-VLA | 0.9B | 98.1% | ~30k steps |
