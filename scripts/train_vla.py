@@ -23,6 +23,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 import tyro
 from loguru import logger
@@ -63,6 +64,7 @@ class VLATrainArgs:
     wandb_project: str = "lobe-train"
     resume: bool = False
     extra_args: str = ""  # additional args passed to lerobot-train
+    num_gpus: int = 1  # number of GPUs for distributed training (uses accelerate launch)
 
 
 def main():
@@ -83,16 +85,26 @@ def main():
     policy_path = args.policy_path or preset["policy_path"]
     batch_size = args.batch_size or preset["batch_size"]
     steps = args.steps or preset["steps"]
-    output_dir = args.output_dir or f"checkpoints/{args.model}-{args.dataset.split('/')[-1]}-{steps // 1000}k"
+    # Default output to local SSD if available, else local checkpoints/
+    ssd_base = Path("/mnt/localssd/sunlingfeng/checkpoints")
+    default_base = ssd_base if ssd_base.parent.exists() else Path("checkpoints")
+    output_dir = args.output_dir or str(default_base / f"{args.model}-{args.dataset.split('/')[-1]}-{steps // 1000}k")
 
     # Build lerobot-train command
-    # Use -c wrapper to apply video_compat patch (PyAV) before lerobot imports.
-    # This patches torchvision VideoReader (removed in nightly) with PyAV.
-    cmd = [
-        sys.executable,
-        "-c",
-        "import sys; sys.argv[0] = 'lerobot-train'; import lobe.video_compat; "
-        "from lerobot.scripts.lerobot_train import main; main()",
+    # Use video_compat entry point that patches PyAV before lerobot imports.
+    entry_script = str(Path(__file__).parent / "_lerobot_train_entry.py")
+    if args.num_gpus > 1:
+        cmd = [
+            sys.executable, "-m", "accelerate.commands.launch",
+            "--num_processes", str(args.num_gpus),
+            "--multi_gpu",
+            entry_script,
+        ]
+    else:
+        cmd = [sys.executable, entry_script]
+
+    # Append lerobot-train args (after the entry script, works for both single and multi-GPU)
+    cmd.extend([
         f"--dataset.repo_id={args.dataset}",
         f"--policy.path={policy_path}",
         f"--batch_size={batch_size}",
@@ -103,7 +115,7 @@ def main():
         f"--num_workers={args.num_workers}",
         f"--policy.repo_id={args.dataset.split('/')[-1]}-{args.model}",
         "--save_checkpoint=true",
-    ]
+    ])
 
     # SmolVLA expects camera1/camera2/camera3 — remap dataset image keys
     if args.model == "smolvla":

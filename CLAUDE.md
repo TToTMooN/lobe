@@ -10,6 +10,10 @@
 4. **Shared machine etiquette.** Always `nvidia-smi` before launching. Don't hog GPU when others need it.
 5. **Data loading is always the bottleneck.** Use image-format datasets (not video). Use more workers. For small datasets, pre-cache as .pt tensors.
 6. **Benchmark on tasks where your policy type is KNOWN to work.** Diffusion/FM are proven on PushT, LIBERO, robomimic. Don't waste time debugging a policy on a benchmark where it was never shown to work.
+7. **Log everything to experiments.tsv — even failures.** Every training run, eval, and debug attempt gets a row. This is the audit trail of how we got to the final result. Failed experiments are as valuable as successes — they record what we tried and why it didn't work. Think of it as auto-research: the tsv tells the full story.
+8. **Use existing tools, don't reinvent.** For multi-GPU, use `accelerate`. For VLA training, use `lerobot-train`. Search other codebases first. Only build custom when you're certain it's cleaner.
+9. **Maximize GPU utilization.** Use all available GPUs for a single training run (distributed), not one GPU per experiment. `accelerate launch --num_processes=N` for lerobot-based training.
+10. **NEVER STOP.** Always have a training run, eval, or experiment running. When one finishes, immediately start the next item on the plan. Commit progress, log results, update the plan, and launch the next experiment. Idle GPUs are wasted money. If blocked on one task, start another in parallel.
 
 ## Key References
 
@@ -25,19 +29,28 @@ See `.claude/projects/-home-lingfeng-playground-lobe/memory/MEMORY.md` for detai
 
 ### Verified results
 - FM on PushT: 40% (transformer, 10k steps), 60% (unet, 10k steps) — both backbones work
-- FM on PushT: needs full 50k run for final numbers
+- SmolVLA on LIBERO-10: **51%** (paper config, 100k steps, batch=64) — beats official HF checkpoint (41%)
+- Official SmolVLA checkpoint: **41%** on our eval (published 87.3%) — known community reproduction gap
+- Training optimizations: data loading fix (12x), bf16 (3x), persistent_workers — total 8x speedup
 
-### In progress / next
-1. **SmolVLA on LIBERO** — reproduce 87.3% published result
-   - Dataset: `HuggingFaceVLA/libero` (273k examples, 22.4k episodes, 2 cameras)
-   - Config: batch=64, 100k steps, `lerobot/smolvla_base` pretrained
-   - Camera remap: image→camera1, image2→camera2, 1 empty
-   - Command: `uv run python scripts/train_vla.py --model smolvla --dataset HuggingFaceVLA/libero --steps 100000 --batch-size 64`
-2. **FM on LIBERO** — test if our FM policy works on real manipulation
+### Current Plan (in priority order — ALWAYS have something running)
+1. **FM on LIBERO** — train our FM policy on LIBERO, eval on all suites
    - Command: `uv run python scripts/train.py libero-fm --performance.no-compile`
-   - Diffusion Policy baseline: 72.4% on LIBERO (published)
-   - If FM fails here too, compare against LeRobot's built-in diffusion
-3. **Eval**: use `lerobot-eval --env.type=libero --env.task=libero_10` after training
+   - Diffusion Policy baseline: 72.4% (published)
+   - This tests our core FM implementation on real manipulation
+2. **Full LIBERO benchmark** — eval SmolVLA on ALL suites (spatial, object, goal, 10), not just libero_10
+   - Eval command: `lerobot-eval --env.type=libero --env.task=libero_spatial,libero_object,libero_goal,libero_10`
+   - Generate comparison table vs published baselines
+3. **LeRobot Diffusion Policy on LIBERO** — reproduce the 72.4% baseline
+   - `lerobot-train --policy.type=diffusion --dataset.repo_id=HuggingFaceVLA/libero`
+4. **Mujoco downgrade + re-eval** — try mujoco==3.3.2 to close the SmolVLA eval gap
+5. **More methods** — research and implement the best VLA methods for LIBERO (pi0, XVLA, etc.)
+
+### Eval notes
+- Use `MUJOCO_GL=osmesa` (EGL broken due to driver version mismatch)
+- Use `--policy.n_action_steps=10` for SmolVLA (1 gave worse results)
+- Use `--eval.batch_size=1 --eval.n_episodes=10` per task
+- Output dir on SSD: `/mnt/localssd/sunlingfeng/checkpoints/`
 
 ### Published LIBERO baselines (target numbers)
 | Model | Params | Avg Success | Config |
