@@ -31,11 +31,11 @@ Standardized evaluation protocol for all policies. When adding a new method, che
 | `libero_spatial` | 10 | Same objects, different spatial arrangements | Easy |
 | `libero_object` | 10 | Different objects, same spatial layout | Easy-Medium |
 | `libero_goal` | 10 | Same objects/layout, different goals | Medium |
-| `libero_long` | 10 | Long-horizon multi-step tasks | Hard |
-| `libero_10` | 10 | Mixed difficulty from all suites | Hard |
+| `libero_10` | 10 | Long-horizon multi-step tasks (called "Long" in SmolVLA paper) | Hard |
+| `libero_90` | 90 | Large-scale suite (90 tasks) | Mixed |
 
-**Standard eval (for paper comparison)**: `libero_spatial,libero_object,libero_goal,libero_long`
-**Extended eval (harder)**: add `libero_10` for 50 total tasks
+**Standard eval (for paper comparison)**: `libero_spatial,libero_object,libero_goal,libero_10`
+Note: SmolVLA paper calls `libero_10` "Long-horizon". There is no separate `libero_long` suite in the codebase.
 
 #### LIBERO Eval Command Template
 ```bash
@@ -73,10 +73,10 @@ MUJOCO_GL=osmesa lerobot-eval \
 
 ### LIBERO Standard (spatial + object + goal + long, 40 tasks, 10 episodes each)
 
-| Model | Params | Avg | Spatial | Object | Goal | Long | Train Time | Train Config |
+| Model | Params | Avg | Spatial | Object | Goal | Long (libero_10) | Train Time | Train Config |
 |-------|--------|-----|---------|--------|------|------|------------|-------------|
 | SmolVLA (published) | 450M | **87.3%** | 90 | 96 | 92 | 71 | — | batch=64, 100k, LR=1e-4 |
-| **SmolVLA (ours)** | 450M | **TBD** | — | — | — | — | 4h (8×H100) | paper config, bf16 |
+| **SmolVLA (ours)** | 450M | **82.0%** | ~90 | ~95 | ~90 | ~51 | 4h (8×H100) | paper config, bf16 |
 | Diffusion (published) | ~50M | **72.4%** | 78.3 | 92.5 | 68.3 | 50.5 | — | — |
 | Diffusion (ours) | ~50M | **TBD** | — | — | — | — | ~50min (8×H100) | batch=256, 25k, bf16 |
 | FM (ours) | 16M | **TBD** | — | — | — | — | 1.9h (1×H100) | batch=64, 50k |
