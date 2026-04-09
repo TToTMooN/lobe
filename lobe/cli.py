@@ -19,3 +19,8 @@ def train():
 def eval():
     from lerobot.scripts.lerobot_eval import main
     main()
+
+
+def serve():
+    from lobe.serve import main
+    main()
