@@ -1,17 +1,11 @@
-*.egg-info/
-*.egg/
-*.pyc
-*.pyo
-*.pyd
+# Build artifacts
+site/
 __pycache__/
+*.egg-info/
 .venv/
-.ruff_cache/
-datasets/
-checkpoints/
-*.png
-wandb/
-results/
-recordings/
+*.pyc
+
+# Outputs
 outputs/
 checkpoints/
 wandb/

@@ -1,0 +1,66 @@
+site_name: LOBE — Learning Orchestration, Brain-to-Embodiment
+site_description: Lightweight package for custom and lerobot VLA policy training, eval, and serving.
+site_url: https://github.com/your-username/lobe
+repo_url: https://github.com/your-username/lobe
+repo_name: lobe
+copyright: Copyright &copy; 2026
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - footnotes
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Quick Start: quickstart.md
+  - Architecture: architecture.md
+  - Workflows:
+      - Training: workflows/training.md
+      - Evaluation: workflows/evaluation.md
+      - Serving: workflows/serving.md
+  - Policies:
+      - Built-in (lerobot): policies/builtin.md
+      - Custom (Flow Matching): policies/flow_matching.md
+      - Adding new policies: policies/adding.md
+  - Benchmarks: benchmarks.md
+  - Reference:
+      - CLI: reference/cli.md
+      - Patches: reference/patches.md
+      - Configuration: reference/config.md
