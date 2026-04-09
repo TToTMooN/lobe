@@ -103,7 +103,7 @@ class PolicyServer:
         try:
             async for message in websocket:
                 t0 = time.perf_counter()
-                obs = msgpack.unpackb(message, raw=False)
+                obs = msgpack.unpackb(message, raw=False, object_hook=msgpack_numpy.decode)
                 batch = _build_obs_batch(obs, self.device, self.image_keys)
 
                 # Apply preprocessor (normalization, batching) then policy then postprocessor
@@ -125,7 +125,7 @@ class PolicyServer:
                         "total_ms": round((time.perf_counter() - t0) * 1000, 2),
                     },
                 }
-                await websocket.send(msgpack.packb(response, use_bin_type=True))
+                await websocket.send(msgpack.packb(response, use_bin_type=True, default=msgpack_numpy.encode))
 
         except Exception as e:
             logger.exception(f"Client {client_addr} error: {e}")
@@ -155,14 +155,16 @@ def main():
 
     # Load policy + preprocessor + postprocessor from checkpoint
     from lerobot.configs.policies import PreTrainedConfig
-    from lerobot.policies.factory import make_policy, make_pre_post_processors
+    from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 
     logger.info(f"Loading policy from {config.checkpoint}")
     policy_cfg = PreTrainedConfig.from_pretrained(config.checkpoint)
     policy_cfg.pretrained_path = config.checkpoint
     policy_cfg.device = config.device
 
-    policy = make_policy(cfg=policy_cfg)
+    # Use policy_cls.from_pretrained directly (skips dataset_meta requirement)
+    policy_cls = get_policy_class(policy_cfg.type)
+    policy = policy_cls.from_pretrained(config.checkpoint)
     policy.to(config.device)
     policy.eval()
 
