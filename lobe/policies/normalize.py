@@ -38,16 +38,30 @@ class Normalize(torch.nn.Module):
         super().__init__()
         self.features = features
         self.normalization_mapping = normalization_mapping
-        if dataset_stats is not None:
-            for key, ft in features.items():
-                mode = normalization_mapping.get(ft.type.value, NormalizationMode.IDENTITY)
-                if mode == NormalizationMode.MIN_MAX and key in dataset_stats:
-                    self.register_buffer(f"buffer_{key.replace('.', '_')}_min", _to_tensor(dataset_stats[key]["min"]))
-                    self.register_buffer(f"buffer_{key.replace('.', '_')}_max", _to_tensor(dataset_stats[key]["max"]))
-                elif mode == NormalizationMode.MEAN_STD and key in dataset_stats:
-                    val = _to_tensor(dataset_stats[key]["mean"])
-                    self.register_buffer(f"buffer_{key.replace('.', '_')}_mean", val)
-                    self.register_buffer(f"buffer_{key.replace('.', '_')}_std", _to_tensor(dataset_stats[key]["std"]))
+        # Always register buffers (with zero defaults if no stats) so checkpoint loading works.
+        for key, ft in features.items():
+            mode = normalization_mapping.get(ft.type.value, NormalizationMode.IDENTITY)
+            buf_key = key.replace(".", "_")
+            shape = ft.shape if hasattr(ft, "shape") else (1,)
+            # For images (CHW), use per-channel stats (C,1,1). Otherwise use full shape.
+            if len(shape) == 3:
+                stat_shape = (shape[0], 1, 1)
+            else:
+                stat_shape = shape
+            if mode == NormalizationMode.MIN_MAX:
+                if dataset_stats is not None and key in dataset_stats:
+                    self.register_buffer(f"buffer_{buf_key}_min", _to_tensor(dataset_stats[key]["min"]))
+                    self.register_buffer(f"buffer_{buf_key}_max", _to_tensor(dataset_stats[key]["max"]))
+                else:
+                    self.register_buffer(f"buffer_{buf_key}_min", torch.zeros(stat_shape))
+                    self.register_buffer(f"buffer_{buf_key}_max", torch.ones(stat_shape))
+            elif mode == NormalizationMode.MEAN_STD:
+                if dataset_stats is not None and key in dataset_stats:
+                    self.register_buffer(f"buffer_{buf_key}_mean", _to_tensor(dataset_stats[key]["mean"]))
+                    self.register_buffer(f"buffer_{buf_key}_std", _to_tensor(dataset_stats[key]["std"]))
+                else:
+                    self.register_buffer(f"buffer_{buf_key}_mean", torch.zeros(stat_shape))
+                    self.register_buffer(f"buffer_{buf_key}_std", torch.ones(stat_shape))
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         batch = dict(batch)
@@ -74,16 +88,29 @@ class Unnormalize(torch.nn.Module):
         super().__init__()
         self.features = features
         self.normalization_mapping = normalization_mapping
-        if dataset_stats is not None:
-            for key, ft in features.items():
-                mode = normalization_mapping.get(ft.type.value, NormalizationMode.IDENTITY)
-                if mode == NormalizationMode.MIN_MAX and key in dataset_stats:
-                    self.register_buffer(f"buffer_{key.replace('.', '_')}_min", _to_tensor(dataset_stats[key]["min"]))
-                    self.register_buffer(f"buffer_{key.replace('.', '_')}_max", _to_tensor(dataset_stats[key]["max"]))
-                elif mode == NormalizationMode.MEAN_STD and key in dataset_stats:
-                    val = _to_tensor(dataset_stats[key]["mean"])
-                    self.register_buffer(f"buffer_{key.replace('.', '_')}_mean", val)
-                    self.register_buffer(f"buffer_{key.replace('.', '_')}_std", _to_tensor(dataset_stats[key]["std"]))
+        # Always register buffers (with zero defaults if no stats) so checkpoint loading works.
+        for key, ft in features.items():
+            mode = normalization_mapping.get(ft.type.value, NormalizationMode.IDENTITY)
+            buf_key = key.replace(".", "_")
+            shape = ft.shape if hasattr(ft, "shape") else (1,)
+            if len(shape) == 3:
+                stat_shape = (shape[0], 1, 1)
+            else:
+                stat_shape = shape
+            if mode == NormalizationMode.MIN_MAX:
+                if dataset_stats is not None and key in dataset_stats:
+                    self.register_buffer(f"buffer_{buf_key}_min", _to_tensor(dataset_stats[key]["min"]))
+                    self.register_buffer(f"buffer_{buf_key}_max", _to_tensor(dataset_stats[key]["max"]))
+                else:
+                    self.register_buffer(f"buffer_{buf_key}_min", torch.zeros(stat_shape))
+                    self.register_buffer(f"buffer_{buf_key}_max", torch.ones(stat_shape))
+            elif mode == NormalizationMode.MEAN_STD:
+                if dataset_stats is not None and key in dataset_stats:
+                    self.register_buffer(f"buffer_{buf_key}_mean", _to_tensor(dataset_stats[key]["mean"]))
+                    self.register_buffer(f"buffer_{buf_key}_std", _to_tensor(dataset_stats[key]["std"]))
+                else:
+                    self.register_buffer(f"buffer_{buf_key}_mean", torch.zeros(stat_shape))
+                    self.register_buffer(f"buffer_{buf_key}_std", torch.ones(stat_shape))
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         batch = dict(batch)
