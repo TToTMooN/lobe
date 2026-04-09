@@ -84,25 +84,29 @@ asyncio.run(main())
 
 `lobe-serve` supports three modes:
 
-### Single-action mode (default)
+### Chunk mode (default)
 
-Server returns one action per observation. Works with all policies. Simplest, lowest server-side complexity.
+Server returns the full action chunk (e.g. 50 actions for SmolVLA) per observation. The robot client decides how many actions to execute before re-querying. This is the right mode for real robots because the policy forward pass (~1.3s for SmolVLA) is too slow to query at every 30 FPS timestep.
 
 ```bash
-lobe-serve --checkpoint=<path>
+lobe-serve --checkpoint=<path>     # chunk mode is default
 ```
 
-### Chunk mode
+### Single-action mode
 
-Server returns the full action chunk (e.g. 50 actions for SmolVLA) per observation. The robot client decides how many actions to execute before re-querying. Higher robot-side complexity but lower server load.
+Server returns one action per observation. Useful for testing and for very lightweight policies. Run the policy on every robot timestep — only practical if inference time < 1/fps.
 
 ```bash
-lobe-serve --checkpoint=<path> --chunk-mode
+lobe-serve --checkpoint=<path> --no-chunk-mode
 ```
 
 ### Chunk mode + RTC (Real-Time Chunking)
 
-For flow-matching policies (SmolVLA, pi0, FM), enables [Real-Time Chunking](https://www.physicalintelligence.company/research/real_time_chunking) which uses leftover actions from the previous chunk to guide generation of the next chunk via prefix attention. This produces smoother streaming inference at the cost of compute.
+Enables [Real-Time Chunking](https://www.physicalintelligence.company/research/real_time_chunking), which uses leftover actions from the previous chunk to guide generation of the next chunk via prefix attention. This produces smoother streaming inference at the cost of compute.
+
+**Supported policies**: SmolVLA, pi0, pi0_fast, pi05. These have `init_rtc_processor()` and accept RTC kwargs in `predict_action_chunk()`.
+
+**Not supported**: Diffusion Policy and our custom Flow Matching policy. Lerobot has not integrated RTC into Diffusion Policy yet (the technique works with diffusion in principle, just not implemented). Adding RTC to our FM policy is on the v1.0 roadmap.
 
 ```bash
 lobe-serve --checkpoint=<path> --chunk-mode --rtc
@@ -118,7 +122,7 @@ Additional RTC options:
 
 When `rtc-inference-latency=0`, the server tracks recent inference times in a rolling window and uses the average to compute `real_delay = latency * fps`. This determines how many actions from each new chunk are skipped (because they correspond to actions the robot already executed during inference time).
 
-RTC requires the policy to support `predict_action_chunk()` with the `prev_chunk_left_over`, `inference_delay`, and `execution_horizon` kwargs. SmolVLA, pi0, pi0_fast, and pi05 all support this. Diffusion Policy does **not** (it's not a flow-matching policy).
+RTC requires the policy to support `predict_action_chunk()` with the `prev_chunk_left_over`, `inference_delay`, and `execution_horizon` kwargs.
 
 ## Verified end-to-end
 

@@ -50,9 +50,9 @@ class ServeConfig:
     device: str = "cuda"
 
     # Inference mode
-    chunk_mode: bool = False  # Return full action chunk per inference (default: single action)
+    chunk_mode: bool = True  # Return full action chunk per inference (recommended for real robots)
 
-    # RTC (only valid with chunk_mode=True and flow-matching policies)
+    # RTC (only valid with chunk_mode=True and policies that support it: SmolVLA, pi0, pi0_fast, pi05)
     rtc: bool = False  # Enable Real-Time Chunking for smoother streaming inference
     rtc_max_guidance_weight: float = 10.0
     rtc_execution_horizon: int = 10
