@@ -31,6 +31,13 @@ eval = [
 aloha = [
     "gym-aloha",
 ]
+libero = [
+    "robosuite==1.4.1",
+    "bddl",
+    "easydict",
+    "matplotlib",
+    "gym",
+]
 
 [project.scripts]
 lobe-train = "lobe.cli:train"
