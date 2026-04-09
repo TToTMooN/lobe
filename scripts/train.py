@@ -148,7 +148,22 @@ def train_one(cfg: TrainPipelineConfig, dataset, features, env_module):
         cosine = CosineAnnealingLR(optimizer, T_max=cfg.train.steps - cfg.train.warmup_steps, eta_min=1e-6)
         scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[cfg.train.warmup_steps])
 
-    use_amp = cfg.performance.bf16 and cfg.device == "cuda"
+    # Multi-GPU: wrap with accelerate if available
+    accelerator = None
+    try:
+        from accelerate import Accelerator
+
+        accelerator = Accelerator(mixed_precision="bf16" if cfg.performance.bf16 else "no")
+        policy, optimizer, dataloader = accelerator.prepare(policy, optimizer, dataloader)
+        if scheduler is not None:
+            scheduler = accelerator.prepare(scheduler)
+        cfg.device = str(accelerator.device)
+        if accelerator.is_main_process:
+            logger.info(f"Accelerate: {accelerator.num_processes} GPUs, device={accelerator.device}")
+    except ImportError:
+        pass
+
+    use_amp = cfg.performance.bf16 and cfg.device == "cuda" and accelerator is None
     amp_dtype = torch.bfloat16 if cfg.performance.bf16 else torch.float32
 
     # Check if env supports evaluation
@@ -169,14 +184,19 @@ def train_one(cfg: TrainPipelineConfig, dataset, features, env_module):
 
         if gpu_resident:
             batch = {k: v for k, v in batch.items() if isinstance(v, torch.Tensor)}
-        else:
+        elif accelerator is None:
             batch = {k: v.to(cfg.device, non_blocking=True) for k, v in batch.items() if isinstance(v, torch.Tensor)}
+        else:
+            batch = {k: v for k, v in batch.items() if isinstance(v, torch.Tensor)}
 
-        with torch.autocast("cuda", dtype=amp_dtype, enabled=use_amp):
+        with torch.autocast("cuda", dtype=amp_dtype, enabled=use_amp) if accelerator is None else accelerator.autocast():
             loss, _ = policy.forward(batch)
             loss = loss / accum
 
-        loss.backward()
+        if accelerator is not None:
+            accelerator.backward(loss)
+        else:
+            loss.backward()
 
         if step % accum == 0:
             optimizer.step()

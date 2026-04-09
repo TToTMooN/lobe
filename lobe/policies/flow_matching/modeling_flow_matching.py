@@ -50,14 +50,22 @@ class FlowMatchingPolicy(PreTrainedPolicy):
         self,
         config: FlowMatchingConfig,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+        dataset_meta=None,  # Accepted for lerobot factory compatibility
     ):
         super().__init__(config)
         config.validate_features()
         self.config = config
 
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-        self.normalize_targets = Normalize(config.output_features, config.normalization_mapping, dataset_stats)
-        self.unnormalize_outputs = Unnormalize(config.output_features, config.normalization_mapping, dataset_stats)
+        # Normalization: when dataset_stats is provided (custom train.py), normalize internally.
+        # When None (lerobot-train), the preprocessor pipeline handles normalization externally.
+        if dataset_stats is not None:
+            self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
+            self.normalize_targets = Normalize(config.output_features, config.normalization_mapping, dataset_stats)
+            self.unnormalize_outputs = Unnormalize(config.output_features, config.normalization_mapping, dataset_stats)
+        else:
+            self.normalize_inputs = torch.nn.Identity()
+            self.normalize_targets = torch.nn.Identity()
+            self.unnormalize_outputs = torch.nn.Identity()
 
         self._queues = None
         self.flow_matching = FlowMatchingModel(config)
