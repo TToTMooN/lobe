@@ -19,7 +19,7 @@ Standardized evaluation protocol for all policies. When adding a new method, che
 - **Dataset**: `HuggingFaceVLA/libero` (273k frames, 1693 episodes, 2 cameras at 256×256)
 - **Obs**: 2 camera images (agentview + eye-in-hand) + robot state (8-dim: eef_pos + axis_angle + gripper)
 - **Action**: 7-dim (6 DOF + gripper)
-- **Rendering**: `MUJOCO_GL=osmesa` on headless servers (EGL requires matching NVIDIA driver)
+- **Rendering**: `MUJOCO_GL=egl` (GPU-accelerated, 21 it/s) preferred. Fallback: `MUJOCO_GL=osmesa` (CPU, 7 it/s, 3× slower)
 - **Use for**: Primary benchmark. All methods must report numbers here.
 
 #### LIBERO Eval Suites
