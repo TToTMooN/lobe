@@ -30,3 +30,4 @@ timestamp	env	policy	backbone	norm	steps	batch_size	n_params	final_loss	success_
 2026-04-09 02:54	libero	flow_matching	transformer	MEAN_STD	100	64	15789383	1.964383	0.0%	0.000	19	5.2	334	NVIDIA H100 80GB HBM3	
 2026-04-09 03:43	libero	flow_matching	unet_small	MEAN_STD	50000	64	0	0.343000	0.0%	0.000	1980	25.3	1616	8xH100 80GB	FM via lerobot-train, 8-GPU, bf16. 25 steps/s, 33min. Loss matches custom trainer. Small UNet (256,512,1024). Needs eval + fair comparison with diffusion using same large UNet.
 2026-04-09 04:39	libero	flow_matching	unet_large	MEAN_STD	25000	256	0	0.338000	0.0%	0.000	3120	8.0	2051	8xH100 80GB	H2H FM: large UNet (512,1024,2048), batch=256, LR=4e-4, bf16. ~52min. For direct comparison with diffusion.
+2026-04-09 09:33	libero_4suite	diffusion	unet_large	MIN_MAX	25000	256	0	0.025000	36.5%	0.365	3240	7.7	1975	8xH100 80GB	H2H DP eval: 36.5%. Same config as H2H FM (large UNet, batch=256, LR=4e-4). Bad — LR too high.
