@@ -104,9 +104,13 @@ lobe-serve --checkpoint=<path> --no-chunk-mode
 
 Enables [Real-Time Chunking](https://www.physicalintelligence.company/research/real_time_chunking), which uses leftover actions from the previous chunk to guide generation of the next chunk via prefix attention. This produces smoother streaming inference at the cost of compute.
 
+**When to use RTC**: only with VLAs (SmolVLA, pi0, etc.) where inference takes hundreds of milliseconds to seconds. The robot keeps executing the previous chunk while the server inference runs, then RTC stitches the new chunk seamlessly onto the in-flight one.
+
+**When not to use RTC**: with fast policies like Diffusion Policy and our custom Flow Matching, inference is ~50ms — fast enough to query synchronously. Each new query produces a fresh chunk that the robot starts executing immediately. No stitching needed, no compute overhead.
+
 **Supported policies**: SmolVLA, pi0, pi0_fast, pi05. These have `init_rtc_processor()` and accept RTC kwargs in `predict_action_chunk()`.
 
-**Not supported**: Diffusion Policy and our custom Flow Matching policy. Lerobot has not integrated RTC into Diffusion Policy yet (the technique works with diffusion in principle, just not implemented). Adding RTC to our FM policy is on the v1.0 roadmap.
+**Not supported (and not needed)**: Diffusion Policy and our custom Flow Matching policy — fast enough to run synchronously. Lerobot has not integrated RTC into Diffusion Policy, and we will not integrate it into our FM either unless someone wants it.
 
 ```bash
 lobe-serve --checkpoint=<path> --chunk-mode --rtc
