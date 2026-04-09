@@ -56,16 +56,12 @@ class FlowMatchingPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        # Normalization: when dataset_stats is provided (custom train.py), normalize internally.
-        # When None (lerobot-train), the preprocessor pipeline handles normalization externally.
-        if dataset_stats is not None:
-            self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-            self.normalize_targets = Normalize(config.output_features, config.normalization_mapping, dataset_stats)
-            self.unnormalize_outputs = Unnormalize(config.output_features, config.normalization_mapping, dataset_stats)
-        else:
-            self.normalize_inputs = torch.nn.Identity()
-            self.normalize_targets = torch.nn.Identity()
-            self.unnormalize_outputs = torch.nn.Identity()
+        # Always use internal normalization with dataset_stats (same as custom train.py).
+        # When using lerobot-train, dataset_stats is passed by the factory (line 477 of factory.py).
+        # We disable lerobot's preprocessor normalization to avoid double-normalization.
+        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
+        self.normalize_targets = Normalize(config.output_features, config.normalization_mapping, dataset_stats)
+        self.unnormalize_outputs = Unnormalize(config.output_features, config.normalization_mapping, dataset_stats)
 
         self._queues = None
         self.flow_matching = FlowMatchingModel(config)
