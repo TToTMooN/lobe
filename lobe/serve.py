@@ -1,18 +1,28 @@
 """WebSocket policy server — serves any lerobot-format policy to limb robots.
 
-Loads policies via lerobot's `make_policy` from a checkpoint directory (the
+Loads policies via lerobot's `from_pretrained` from a checkpoint directory (the
 `pretrained_model/` subdirectory produced by lobe-train / lerobot-train).
+
+Supports two modes:
+
+1. **Single-action mode** (default): client sends one observation, server returns one action.
+   Works with all policies.
+
+2. **Chunk mode** (`--chunk-mode=true`): server returns the full action chunk per inference.
+   Optionally enables Real-Time Chunking (RTC) when `--rtc=true` for smoother streaming
+   inference with flow-matching policies (SmolVLA, pi0, FM). RTC uses leftover actions
+   from the previous chunk to guide generation of the next chunk via prefix attention.
 
 Implements limb's WebSocketPolicyClient protocol:
 1. Client connects via ws://host:port
 2. Server sends metadata (msgpack): {model_name, action_horizon, action_dim, ...}
 3. Client sends obs (msgpack): {state: float32, images: {cam: uint8}, prompt: str}
-4. Server responds with actions (msgpack): {actions: float32(H, D), timing: {infer_ms}}
+4. Server responds with action(s) (msgpack): {actions: float32(H, D), timing: {infer_ms}}
 5. Loop 3-4 until disconnect
 
 Usage:
-    lobe-serve --checkpoint /path/to/checkpoints/050000/pretrained_model
-    lobe-serve --checkpoint HuggingFaceVLA/smolvla_libero  # from HF Hub
+    lobe-serve --checkpoint=/path/to/pretrained_model
+    lobe-serve --checkpoint=HuggingFaceVLA/smolvla_libero --chunk-mode --rtc
 """
 from __future__ import annotations
 
@@ -39,8 +49,17 @@ class ServeConfig:
     port: int = 8000
     device: str = "cuda"
 
+    # Inference mode
+    chunk_mode: bool = False  # Return full action chunk per inference (default: single action)
 
-def _build_obs_batch(obs: dict, device: str, image_keys: list[str]) -> dict[str, torch.Tensor]:
+    # RTC (only valid with chunk_mode=True and flow-matching policies)
+    rtc: bool = False  # Enable Real-Time Chunking for smoother streaming inference
+    rtc_max_guidance_weight: float = 10.0
+    rtc_execution_horizon: int = 10
+    rtc_inference_latency: float = 0.0  # Estimated server inference time in seconds (auto-tracked if 0)
+
+
+def _build_obs_batch(obs: dict, device: str) -> dict[str, torch.Tensor]:
     """Convert client observation dict to policy input batch.
 
     Expected client format:
@@ -68,7 +87,13 @@ def _build_obs_batch(obs: dict, device: str, image_keys: list[str]) -> dict[str,
 
 
 class PolicyServer:
-    """Async WebSocket server wrapping any lerobot policy."""
+    """Async WebSocket server wrapping any lerobot policy.
+
+    Three modes:
+    - single-action: server returns one action per obs (default)
+    - chunk: server returns the full action horizon per obs
+    - chunk + RTC: server uses Real-Time Chunking for smoother streaming
+    """
 
     def __init__(self, policy, preprocessor, postprocessor, config: ServeConfig):
         self.policy = policy
@@ -81,48 +106,122 @@ class PolicyServer:
         cfg = policy.config
         self.image_keys = list(cfg.image_features.keys()) if cfg.image_features else []
         action_dim = cfg.output_features["action"].shape[0] if "action" in cfg.output_features else 0
+        action_horizon = getattr(cfg, "n_action_steps", 1)
+
+        # RTC setup
+        self.rtc_enabled = config.rtc and config.chunk_mode
+        self.rtc_supported = hasattr(policy, "predict_action_chunk") and "rtc" in cfg.__class__.__name__.lower()
+
+        if self.rtc_enabled and not hasattr(policy, "predict_action_chunk"):
+            logger.warning(
+                f"RTC requested but policy {cfg.type} does not support predict_action_chunk. "
+                "Falling back to chunk mode without RTC."
+            )
+            self.rtc_enabled = False
+
+        # Action queue for RTC (and inflight tracking)
+        self._action_queue = None
+        self._prev_chunk: torch.Tensor | None = None
+        self._fps = getattr(cfg, "fps", 30)
+        self._inference_latency = config.rtc_inference_latency
+        self._latency_samples: list[float] = []  # rolling window of recent inference times
 
         self.metadata = {
             "model_name": f"lobe-{cfg.type}",
             "policy_type": cfg.type,
-            "action_horizon": getattr(cfg, "n_action_steps", 1),
+            "action_horizon": action_horizon,
             "action_dim": action_dim,
             "image_keys": self.image_keys,
+            "chunk_mode": config.chunk_mode,
+            "rtc_enabled": self.rtc_enabled,
         }
+
+    def _record_latency(self, latency_s: float):
+        """Track recent inference latencies for RTC delay computation."""
+        self._latency_samples.append(latency_s)
+        if len(self._latency_samples) > 20:
+            self._latency_samples.pop(0)
+        if self.config.rtc_inference_latency == 0:
+            self._inference_latency = sum(self._latency_samples) / len(self._latency_samples)
+
+    def _compute_rtc_delay(self) -> int:
+        """Compute how many actions were 'consumed' during the last inference.
+
+        With FPS=30 and latency=33ms, this is ~1 action.
+        """
+        return max(1, int(self._inference_latency * self._fps))
+
+    @torch.no_grad()
+    def _infer_actions(self, batch: dict) -> torch.Tensor:
+        """Run inference and return action(s).
+
+        Returns shape (action_horizon, action_dim) for chunk mode, or (action_dim,) for single mode.
+        """
+        batch = self.preprocessor(batch)
+
+        if self.config.chunk_mode:
+            kwargs = {}
+            if self.rtc_enabled:
+                kwargs["prev_chunk_left_over"] = self._prev_chunk
+                kwargs["inference_delay"] = self._compute_rtc_delay()
+                kwargs["execution_horizon"] = self.config.rtc_execution_horizon
+
+            try:
+                actions = self.policy.predict_action_chunk(batch, **kwargs)
+            except TypeError:
+                # Policy doesn't accept RTC kwargs — fall back to plain chunk inference
+                actions = self.policy.predict_action_chunk(batch)
+
+            # actions shape: (1, horizon, action_dim) → strip batch dim
+            actions = actions.squeeze(0)
+        else:
+            actions = self.policy.select_action(batch)
+
+        actions = self.postprocessor(actions)
+
+        # Update prev_chunk for next RTC iteration
+        if self.rtc_enabled and self.config.chunk_mode:
+            delay = self._compute_rtc_delay()
+            self._prev_chunk = actions[delay:].clone() if actions.dim() == 2 else None
+
+        return actions
 
     async def handle_client(self, websocket):
         client_addr = websocket.remote_address
         logger.info(f"Client connected: {client_addr}")
 
+        # Reset state for new client
+        self.policy.reset()
+        self._prev_chunk = None
+        self._latency_samples.clear()
+
         # Send metadata on connect
         await websocket.send(msgpack.packb(self.metadata, use_bin_type=True))
         logger.info(f"Sent metadata: {self.metadata}")
-
-        self.policy.reset()
 
         try:
             async for message in websocket:
                 t0 = time.perf_counter()
                 obs = msgpack.unpackb(message, raw=False, object_hook=msgpack_numpy.decode)
-                batch = _build_obs_batch(obs, self.device, self.image_keys)
+                batch = _build_obs_batch(obs, self.device)
 
-                # Apply preprocessor (normalization, batching) then policy then postprocessor
                 t_infer = time.perf_counter()
-                with torch.no_grad():
-                    batch = self.preprocessor(batch)
-                    action = self.policy.select_action(batch)
-                    action = self.postprocessor(action)
-                infer_ms = (time.perf_counter() - t_infer) * 1000
+                actions = self._infer_actions(batch)
+                infer_s = time.perf_counter() - t_infer
+                self._record_latency(infer_s)
 
-                action_np = action.cpu().numpy() if isinstance(action, torch.Tensor) else np.asarray(action)
-                if action_np.ndim == 1:
-                    action_np = action_np.reshape(1, -1)
+                actions_np = (
+                    actions.cpu().numpy() if isinstance(actions, torch.Tensor) else np.asarray(actions)
+                )
+                if actions_np.ndim == 1:
+                    actions_np = actions_np.reshape(1, -1)
 
                 response = {
-                    "actions": action_np.astype(np.float32),
+                    "actions": actions_np.astype(np.float32),
                     "timing": {
-                        "infer_ms": round(infer_ms, 2),
+                        "infer_ms": round(infer_s * 1000, 2),
                         "total_ms": round((time.perf_counter() - t0) * 1000, 2),
+                        "rtc_delay": self._compute_rtc_delay() if self.rtc_enabled else 0,
                     },
                 }
                 await websocket.send(msgpack.packb(response, use_bin_type=True, default=msgpack_numpy.encode))
@@ -141,6 +240,12 @@ class PolicyServer:
 
         logger.info(f"Starting policy server on ws://{self.config.host}:{self.config.port}")
         logger.info(f"Metadata: {self.metadata}")
+        if self.rtc_enabled:
+            logger.info(
+                f"RTC enabled: max_guidance={self.config.rtc_max_guidance_weight}, "
+                f"execution_horizon={self.config.rtc_execution_horizon}, "
+                f"latency={self._inference_latency * 1000:.0f}ms"
+            )
 
         async with websockets.serve(self.handle_client, self.config.host, self.config.port):
             logger.info("Server ready. Waiting for connections...")
@@ -153,6 +258,10 @@ def main():
     if not config.checkpoint:
         raise ValueError("--checkpoint is required (path to pretrained_model dir or HF repo_id)")
 
+    if config.rtc and not config.chunk_mode:
+        logger.warning("RTC requires --chunk-mode; auto-enabling chunk mode.")
+        config.chunk_mode = True
+
     # Load policy + preprocessor + postprocessor from checkpoint
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.policies.factory import get_policy_class, make_pre_post_processors
@@ -162,11 +271,26 @@ def main():
     policy_cfg.pretrained_path = config.checkpoint
     policy_cfg.device = config.device
 
-    # Use policy_cls.from_pretrained directly (skips dataset_meta requirement)
+    # Override RTC config on the policy if requested
+    if config.rtc and hasattr(policy_cfg, "rtc_config"):
+        from lerobot.policies.rtc.configuration_rtc import RTCConfig
+
+        policy_cfg.rtc_config = RTCConfig(
+            enabled=True,
+            max_guidance_weight=config.rtc_max_guidance_weight,
+            execution_horizon=config.rtc_execution_horizon,
+        )
+        logger.info(f"Set policy.rtc_config to {policy_cfg.rtc_config}")
+
     policy_cls = get_policy_class(policy_cfg.type)
     policy = policy_cls.from_pretrained(config.checkpoint)
     policy.to(config.device)
     policy.eval()
+
+    # Initialize RTC processor if the policy supports it
+    if config.rtc and hasattr(policy, "init_rtc_processor"):
+        policy.init_rtc_processor()
+        logger.info(f"Initialized RTC processor for {policy_cfg.type}")
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy_cfg,
