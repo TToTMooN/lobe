@@ -65,4 +65,6 @@ nav:
       - Patches: reference/patches.md
       - Configuration: reference/config.md
   - Roadmap:
-      - Post-v1.0 methods: roadmap/post_v1_methods.md
+      - Overview: roadmap/post_v1_methods.md
+      - SimVLA technical: roadmap/simvla.md
+      - X-VLA technical: roadmap/xvla.md

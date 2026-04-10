@@ -5,7 +5,41 @@ After v1.0 stabilizes (Phases 1-4 complete), the next milestone is broadening me
 1. **SimVLA** ([arXiv 2602.18224](https://arxiv.org/abs/2602.18224)) — minimal VLA baseline
 2. **X-VLA** ([arXiv 2510.10274](https://arxiv.org/abs/2510.10274)) — soft-prompt cross-embodiment VLA
 
+Detailed technical research reports (after reading the actual code):
+
+- [`simvla.md`](simvla.md) — SimVLA full technical dossier (architecture, training, ablations, integration plan)
+- [`xvla.md`](xvla.md) — X-VLA full technical dossier (same)
+
 Both are flow-matching-based VLAs with public code. Integration follows the same pattern we used for our `flow_matching` policy: register a config + model + processor, then `lobe-train --policy.type=...` works automatically.
+
+## Lerobot ecosystem fit (key finding)
+
+| | SimVLA | X-VLA |
+|---|---|---|
+| **Already in lerobot?** | ❌ no | ✅ **YES — first-party port** |
+| **Code license** | Apache-2.0 | Apache-2.0 (lerobot port) |
+| **VLM backbone** | SmolVLM-500M (Idefics3) | Florence-2-large |
+| **Uses lerobot dataset format** | ❌ raw HDF5 | ✅ via lerobot processor pipeline |
+| **Uses lerobot processor pipeline** | ❌ custom action norm + augs in their dataloader | ✅ standard `make_xvla_pre_post_processors` |
+| **Uses lerobot optimizer/scheduler** | ❌ custom AdamW + 3 param groups in their train script | ✅ standard `get_optimizer_preset` / `get_scheduler_preset` |
+| **Uses lerobot accelerate launch** | ✅ yes (their `train_smolvlm.py` is accelerate-based) | ✅ yes |
+| **HF Hub checkpoint matches lerobot `pretrained_model/`** | ❌ raw `.pth` state dict, not `from_pretrained` compatible | ✅ yes — `lerobot/xvla-pt-base` and others on HF |
+| **Cross-embodiment data plumbing** | n/a (single dataset) | ⚠️ needs integer `domain_id` field on every dataset sample, which lerobot does not natively expose |
+| **Integration effort** | ~1 week (vendor their dataloader, write a wrapper) | ~1 week (config layer + per-dataset domain_id metadata) |
+
+### What this means
+
+**X-VLA fits the lerobot ecosystem natively.** Lerobot 0.5.1 ships a complete first-party port at `lerobot/policies/xvla/` (co-authored by the original X-VLA author `2toINF`). It already:
+- Registers as `--policy.type=xvla` (we saw this in `PreTrainedConfig.get_known_choices()`)
+- Has `XVLAConfig`, `XVLAPolicy`, `make_xvla_pre_post_processors()` — the standard trio
+- Loads HF Hub checkpoints via `from_pretrained`
+- Hooks into `lobe-train` / `lobe-eval` with no extra glue
+
+The remaining work for X-VLA in LOBE is **just**: (a) figure out how to attach `domain_id` to LIBERO and YAM samples so the soft-prompt lookup works, (b) decide whether to fine-tune from `lerobot/xvla-pt-base` or train from scratch, (c) add a row to `BENCHMARKS.md`. **Effort: ~1 week of config and data plumbing, not a reimplementation.**
+
+**SimVLA does NOT fit the lerobot ecosystem out of the box.** They wrote their own everything: dataloader (raw LIBERO HDF5, not the `HuggingFaceVLA/libero` repacking), optimizer (3 param groups with VLM LR×0.1, freeze-then-unfreeze schedule), action normalization (per-dim min-max stats computed offline), training loop (custom Accelerate driver), and even the inference path (they use `forward_vlm_efficient` which bypasses chat templates). The model itself is simple (SmolVLM + plain ViT action head with FM loss), but the **load-bearing details** that get them to 98.6% are scattered across their training script and dataloader, NOT the model code.
+
+The integration question for SimVLA is: do we want to reimplement carefully (risk: miss a load-bearing detail like the Beta(1.5,1) noise sampling or trajectory shuffling, end up at 9.9% instead of 98.6%), or vendor their entire training script under `lobe/policies/simvla/vendored/` and only wrap the inference path for `lobe-serve`? **Recommendation: vendor it.** The SimVLA paper's whole point is that "tiny details" dominate; the only way to honor that is to keep their exact training driver intact.
 
 ---
 
