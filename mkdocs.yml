@@ -64,3 +64,5 @@ nav:
       - CLI: reference/cli.md
       - Patches: reference/patches.md
       - Configuration: reference/config.md
+  - Roadmap:
+      - Post-v1.0 methods: roadmap/post_v1_methods.md
