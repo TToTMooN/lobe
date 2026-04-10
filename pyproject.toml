@@ -56,7 +56,7 @@ torch = { index = "pytorch-nightly" }
 torchvision = { index = "pytorch-nightly" }
 triton = { index = "pytorch-nightly" }
 torchcodec = { index = "pypi" }
-lerobot = { git = "https://github.com/huggingface/lerobot.git" }
+lerobot = { git = "https://github.com/huggingface/lerobot.git", rev = "017ff73fbfe46bf9a673cd9b402988dcb79151f7" }
 
 [tool.ruff]
 line-length = 119
