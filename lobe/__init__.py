@@ -5,5 +5,9 @@ from lobe.patches import apply_patches  # noqa: E402
 
 apply_patches()
 
+# X-VLA is implemented in lerobot — just import to ensure registration
+from lerobot.policies.xvla.configuration_xvla import XVLAConfig  # noqa: F401, E402
+from lerobot.policies.xvla.modeling_xvla import XVLAPolicy  # noqa: F401, E402
+
 import lobe.policies.flow_matching.configuration_flow_matching  # noqa: F401, E402
 import lobe.policies.flow_matching.modeling_flow_matching  # noqa: F401, E402

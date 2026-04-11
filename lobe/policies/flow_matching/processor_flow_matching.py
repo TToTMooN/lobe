@@ -7,11 +7,10 @@ Mirrors lerobot's diffusion processor exactly:
 The model itself receives pre-normalized data and returns pre-unnormalized outputs.
 This matches the pattern used by DiffusionPolicy, SmolVLA, and all other lerobot policies.
 """
+
 from typing import Any
 
 import torch
-
-from lobe.policies.flow_matching.configuration_flow_matching import FlowMatchingConfig
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -23,6 +22,8 @@ from lerobot.processor import (
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+
+from lobe.policies.flow_matching.configuration_flow_matching import FlowMatchingConfig
 
 
 def make_flow_matching_pre_post_processors(

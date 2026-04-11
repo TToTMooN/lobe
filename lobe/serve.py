@@ -24,13 +24,12 @@ Usage:
     lobe-serve --checkpoint=/path/to/pretrained_model
     lobe-serve --checkpoint=HuggingFaceVLA/smolvla_libero --chunk-mode --rtc
 """
+
 from __future__ import annotations
 
 import asyncio
 import time
 from dataclasses import dataclass
-
-import lobe  # noqa: F401 — registers custom policies and applies patches
 
 import msgpack
 import msgpack_numpy  # noqa: F401 — registers numpy hooks
@@ -38,6 +37,8 @@ import numpy as np
 import torch
 import tyro
 from loguru import logger
+
+import lobe  # noqa: F401 — registers custom policies and applies patches
 
 
 @dataclass
@@ -210,9 +211,7 @@ class PolicyServer:
                 infer_s = time.perf_counter() - t_infer
                 self._record_latency(infer_s)
 
-                actions_np = (
-                    actions.cpu().numpy() if isinstance(actions, torch.Tensor) else np.asarray(actions)
-                )
+                actions_np = actions.cpu().numpy() if isinstance(actions, torch.Tensor) else np.asarray(actions)
                 if actions_np.ndim == 1:
                     actions_np = actions_np.reshape(1, -1)
 

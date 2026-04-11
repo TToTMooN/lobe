@@ -143,7 +143,19 @@ class FlowMatchingModel(nn.Module):
         global_cond_dim = self.config.robot_state_feature.shape[0]
         if self.config.image_features:
             num_images = len(self.config.image_features)
-            if getattr(self.config, "vision_encoder", "spatial_softmax") == "global_pool":
+            encoder_type = getattr(self.config, "vision_encoder", "spatial_softmax")
+            if encoder_type in ("dinov2_small", "dinov2_base", "dinov2_large", "siglip_base", "siglip_large"):
+                from lobe.policies.flow_matching.vision_encoder import create_vision_encoder
+
+                frozen = getattr(self.config, "vision_encoder_frozen", True)
+                self.rgb_encoder = create_vision_encoder(
+                    encoder_type,
+                    resize_shape=self.config.resize_shape,
+                    crop_shape=self.config.crop_shape,
+                    frozen=frozen,
+                )
+                global_cond_dim += self.rgb_encoder.feature_dim * num_images
+            elif encoder_type == "global_pool":
                 from lobe.policies.flow_matching.vision_encoder import ResNetPoolEncoder
 
                 resize = self.config.resize_shape

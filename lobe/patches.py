@@ -9,6 +9,7 @@ Patches:
 1. LeRobotDataset._query_hf_dataset → fast path for non-image columns (12x speedup)
 2. lerobot_train DataLoader → persistent_workers=True, prefetch_factor=4
 """
+
 from __future__ import annotations
 
 from loguru import logger
@@ -20,6 +21,7 @@ def _patch_dataset_query():
     Avoids decoding 100 throwaway PNG images per action-chunk query.
     """
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
     from lobe.datasets.fast_lerobot_dataset import FastLeRobotDataset
 
     if getattr(LeRobotDataset, "_lobe_query_patched", False):
