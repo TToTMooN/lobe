@@ -9,8 +9,8 @@ apply_patches()
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig  # noqa: F401, E402
 from lerobot.policies.xvla.modeling_xvla import XVLAPolicy  # noqa: F401, E402
 
-# Register LOBE custom libero processors (V3 auto-mode support)
-import lobe.policies.xvla.libero_v3_processors  # noqa: F401, E402
+# Register LOBE custom X-VLA processors (LIBERO dataset → absolute EE6D adapter)
+import lobe.policies.xvla.libero_xvla_adapter  # noqa: F401, E402
 
 import lobe.policies.flow_matching.configuration_flow_matching  # noqa: F401, E402
 import lobe.policies.flow_matching.modeling_flow_matching  # noqa: F401, E402

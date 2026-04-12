@@ -1,3 +1,3 @@
-"""Local copy of X-VLA policy from lerobot + LOBE custom processors."""
-# Import to register the LiberoV3StateExtractorStep
-from lobe.policies.xvla import libero_v3_processors  # noqa: F401
+"""LOBE X-VLA: local source + custom libero adapter."""
+# Import to register LiberoXVLAAdapterStep
+from lobe.policies.xvla import libero_xvla_adapter  # noqa: F401
