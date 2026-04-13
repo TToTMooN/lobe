@@ -61,45 +61,8 @@ def _patch_dataloader_settings():
     logger.debug("Patched lerobot_train DataLoader (persistent_workers=True, prefetch_factor=4)")
 
 
-def _patch_xvla_libero_preprocessor():
-    """Inject LiberoXVLAAdapterStep into the X-VLA policy preprocessor.
-
-    HuggingFaceVLA/libero stores raw OSC_POSE delta actions, not the absolute EE6D format
-    X-VLA was designed for. This patch wraps `make_pre_post_processors` so that whenever an
-    X-VLA config is loaded, the LiberoXVLAAdapterStep is prepended to the preprocessor
-    pipeline. The step converts raw dataset batches to absolute EE6D on-the-fly during
-    training, and is idempotent at eval (no-op on already-converted env observations).
-
-    This allows us to train X-VLA on HuggingFaceVLA/libero exactly like the paper trained
-    on pre-converted HDF5 data with `abs_action_6d`, without rewriting the dataset.
-    """
-    import lerobot.policies.factory as factory_mod
-    from lerobot.policies.xvla.configuration_xvla import XVLAConfig
-
-    if getattr(factory_mod, "_lobe_xvla_preprocessor_patched", False):
-        return
-
-    _orig_make = factory_mod.make_pre_post_processors
-
-    def _patched_make(policy_cfg, *args, **kwargs):
-        pre, post = _orig_make(policy_cfg, *args, **kwargs)
-        if isinstance(policy_cfg, XVLAConfig):
-            from lobe.policies.xvla.libero_xvla_adapter import LiberoXVLAAdapterStep
-
-            # Insert at position 0 so raw dataset batches are converted before any other step.
-            # Already-converted eval batches pass through unchanged (step is idempotent).
-            if not any(isinstance(s, LiberoXVLAAdapterStep) for s in pre.steps):
-                pre.steps.insert(0, LiberoXVLAAdapterStep())
-                logger.debug("Injected LiberoXVLAAdapterStep at position 0 of X-VLA policy preprocessor")
-        return pre, post
-
-    factory_mod.make_pre_post_processors = _patched_make
-    factory_mod._lobe_xvla_preprocessor_patched = True
-
-
 def apply_patches():
     """Apply all LOBE patches to lerobot. Idempotent."""
     _patch_dataset_query()
-    _patch_xvla_libero_preprocessor()
     # Note: dataloader patch is tricky because lerobot_train imports DataLoader at module level.
     # For now, we keep manually editing lerobot_train.py for that. TODO: better approach.
