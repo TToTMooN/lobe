@@ -1,122 +1,156 @@
-"""Build a new LeRobot dataset from HuggingFaceVLA/libero observations + converted abs_action_6d.
+"""Build a new LeRobot dataset by copying HuggingFaceVLA/libero's parquet files
+and swapping the `action` column with the converted `abs_action_6d` values.
 
-Reads:
-  - HuggingFaceVLA/libero (original) — provides images, state, task, timestamps
-  - cache_dir/episode_{i:06d}.npz — abs_action_6d per episode (10-D) from rel2abs conversion
+This is a direct parquet-level rewriter — no LeRobotDataset.create, no video re-encoding,
+no per-frame image writes. It reuses the source dataset's already-encoded images and only
+replaces the action column.
 
-Writes a new LeRobot v2.1 dataset where:
-  - action shape [10] = [abs_xyz(3), rot6d(6), gripper(1)]   (was [7] = delta)
-  - all other fields copied verbatim from the source
+Input:
+  - Source LeRobot cache: /mnt/localssd/sunlingfeng/cache/huggingface/lerobot/HuggingFaceVLA/libero/
+  - Converted actions:    /mnt/localssd/sunlingfeng/datasets/libero_abs_action_6d_cache/episode_*.npz
+
+Output:
+  - Local dataset rooted at /mnt/localssd/sunlingfeng/datasets/local/libero_abs_action_6d/
+    with same layout as source but action column swapped to shape [10]
 """
 
 from __future__ import annotations
 
-import os
+import json
+import shutil
 from pathlib import Path
 
-os.environ.setdefault("MUJOCO_GL", "osmesa")
-
 import numpy as np
-import torch
+import pyarrow as pa
+import pyarrow.parquet as pq
 import tyro
 from loguru import logger
 
-import lobe  # noqa: F401
-
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
 
 def build_dataset(
+    source_root: Path,
     cache_dir: Path,
     output_root: Path,
-    repo_id: str,
-    fps: int = 10,
 ) -> None:
-    """Build the new dataset by iterating through HuggingFaceVLA/libero and swapping action."""
-    logger.info("Loading source dataset HuggingFaceVLA/libero...")
-    src = LeRobotDataset("HuggingFaceVLA/libero")
-    n_episodes = src.num_episodes
-    logger.info(f"Source: {n_episodes} episodes, {src.num_frames} frames")
+    source_data = source_root / "data" / "chunk-000"
+    source_meta = source_root / "meta"
+    output_data = output_root / "data" / "chunk-000"
+    output_meta = output_root / "meta"
 
-    # Build new dataset features: same as src but action=(10,)
-    src_features = dict(src.meta.features)
-    src_features["action"] = {
-        **src_features["action"],
-        "shape": (10,),
-        "names": ["abs_xyz_x", "abs_xyz_y", "abs_xyz_z", "rot6d_0", "rot6d_1", "rot6d_2", "rot6d_3", "rot6d_4", "rot6d_5", "gripper"],
-    }
+    output_data.mkdir(parents=True, exist_ok=True)
+    output_meta.mkdir(parents=True, exist_ok=True)
 
-    # Only include the features we actually write; LeRobotDataset manages episode_index, frame_index, etc.
-    feature_keys_for_create = {}
-    for k, v in src_features.items():
-        if k in {"episode_index", "frame_index", "index", "task_index", "timestamp"}:
-            continue
-        feature_keys_for_create[k] = v
-
-    logger.info(f"Creating new dataset at {output_root}/{repo_id} with features: {list(feature_keys_for_create.keys())}")
-
-    output_root.mkdir(parents=True, exist_ok=True)
-    dst = LeRobotDataset.create(
-        repo_id=repo_id,
-        fps=fps,
-        features=feature_keys_for_create,
-        root=output_root / repo_id,
-        use_videos=False,  # store images raw for reproducibility
-    )
-
-    # Iterate episodes
-    ep_dataidx = src.episode_data_index
-    skipped = 0
-    for ep_idx in range(n_episodes):
+    # Load all per-episode abs_action_6d into a single dict keyed by (episode_index, frame_index)
+    logger.info("Loading cached abs_action_6d...")
+    abs_actions: dict[int, np.ndarray] = {}
+    for ep_idx in range(1693):
         cache_file = cache_dir / f"episode_{ep_idx:06d}.npz"
         if not cache_file.exists():
-            logger.warning(f"Episode {ep_idx}: no cache file, skipping")
-            skipped += 1
+            logger.warning(f"Missing episode {ep_idx}")
             continue
+        abs_actions[ep_idx] = np.load(cache_file, allow_pickle=True)["abs_action_6d"].astype(np.float32)
+    logger.info(f"Loaded {len(abs_actions)} cached episode actions")
 
-        cache = np.load(cache_file, allow_pickle=True)
-        abs_action_6d = cache["abs_action_6d"]  # (T, 10)
+    # Process parquet files
+    parquet_files = sorted(source_data.glob("file-*.parquet"))
+    logger.info(f"Rewriting {len(parquet_files)} parquet files...")
 
-        # Get source episode frames
-        frame_start = int(ep_dataidx["from"][ep_idx])
-        frame_end = int(ep_dataidx["to"][ep_idx])
-        n_frames = frame_end - frame_start
+    total_frames = 0
+    missing_episodes = 0
+    for i, src_file in enumerate(parquet_files):
+        dst_file = output_data / src_file.name
+        table = pq.read_table(src_file)
 
-        if n_frames != abs_action_6d.shape[0]:
-            logger.warning(
-                f"Episode {ep_idx}: frame count mismatch (src={n_frames}, cache={abs_action_6d.shape[0]}), skipping"
-            )
-            skipped += 1
-            continue
+        # Group rows by episode_index and build the new action column
+        ep_col = table.column("episode_index").to_pylist()
+        frame_col = table.column("frame_index").to_pylist()
 
-        # Add frames
-        for local_t in range(n_frames):
-            src_frame = src[frame_start + local_t]
-            new_action = torch.from_numpy(abs_action_6d[local_t]).float()
-            frame = {
-                "observation.images.image": src_frame["observation.images.image"],
-                "observation.images.image2": src_frame["observation.images.image2"],
-                "observation.state": src_frame["observation.state"],
-                "action": new_action,
-                "task": src_frame["task"],
-            }
-            dst.add_frame(frame)
+        new_action_list: list[list[float]] = [None] * len(table)
+        for row_idx, (ep_idx, frame_idx) in enumerate(zip(ep_col, frame_col)):
+            if ep_idx not in abs_actions:
+                # Episode was not converted — fallback to zeros to keep schema consistent
+                new_action_list[row_idx] = [0.0] * 10
+                missing_episodes += 1
+                continue
+            ep_actions = abs_actions[ep_idx]
+            if frame_idx >= ep_actions.shape[0]:
+                new_action_list[row_idx] = [0.0] * 10
+                missing_episodes += 1
+                continue
+            new_action_list[row_idx] = ep_actions[frame_idx].tolist()
 
-        dst.save_episode()
-        if (ep_idx + 1) % 50 == 0:
-            logger.info(f"[{ep_idx+1}/{n_episodes}] episodes written (skipped={skipped})")
+        # Replace the action column (pyarrow list<float32>)
+        new_action_array = pa.array(new_action_list, type=pa.list_(pa.float32()))
+        new_table = table.set_column(
+            table.schema.get_field_index("action"),
+            "action",
+            new_action_array,
+        )
 
-    logger.success(f"Dataset built: {dst.num_episodes} episodes, {dst.num_frames} frames, skipped {skipped}")
-    logger.info(f"Output: {output_root / repo_id}")
+        pq.write_table(new_table, dst_file, compression="snappy")
+        total_frames += len(table)
+        if (i + 1) % 50 == 0:
+            logger.info(f"[{i+1}/{len(parquet_files)}] files written, {total_frames} frames, missing={missing_episodes}")
+
+    logger.success(
+        f"Wrote {len(parquet_files)} parquet files ({total_frames} frames, {missing_episodes} fallback frames)"
+    )
+
+    # Copy meta files: info.json (with updated action feature shape), tasks.parquet,
+    # episodes directory, and stats.json. The schema in info.json MUST have action shape (10,)
+    # or the loader will error.
+    logger.info("Copying and updating meta files...")
+
+    # info.json — update action shape
+    src_info = json.loads((source_meta / "info.json").read_text())
+    src_info["features"]["action"] = {
+        **src_info["features"]["action"],
+        "shape": [10],
+        "names": [
+            "abs_xyz_x",
+            "abs_xyz_y",
+            "abs_xyz_z",
+            "rot6d_0",
+            "rot6d_1",
+            "rot6d_2",
+            "rot6d_3",
+            "rot6d_4",
+            "rot6d_5",
+            "gripper",
+        ],
+    }
+    (output_meta / "info.json").write_text(json.dumps(src_info, indent=2))
+
+    # tasks.parquet — copy as-is
+    shutil.copy2(source_meta / "tasks.parquet", output_meta / "tasks.parquet")
+
+    # episodes directory — copy recursively
+    src_eps = source_meta / "episodes"
+    dst_eps = output_meta / "episodes"
+    if dst_eps.exists():
+        shutil.rmtree(dst_eps)
+    shutil.copytree(src_eps, dst_eps)
+
+    # stats.json — copy as-is (we don't use it for IDENTITY normalization anyway)
+    if (source_meta / "stats.json").exists():
+        shutil.copy2(source_meta / "stats.json", output_meta / "stats.json")
+
+    # Videos: symlink the source videos directory so we don't duplicate GBs of data
+    src_videos = source_root / "videos"
+    dst_videos = output_root / "videos"
+    if src_videos.exists() and not dst_videos.exists():
+        dst_videos.symlink_to(src_videos)
+        logger.info(f"Symlinked videos: {dst_videos} → {src_videos}")
+
+    logger.success(f"Dataset built at {output_root}")
 
 
 def main(
+    source_root: str = "/mnt/localssd/sunlingfeng/cache/huggingface/lerobot/HuggingFaceVLA/libero",
     cache_dir: str = "/mnt/localssd/sunlingfeng/datasets/libero_abs_action_6d_cache",
-    output_root: str = "/mnt/localssd/sunlingfeng/datasets",
-    repo_id: str = "local/libero_abs_action_6d",
+    output_root: str = "/mnt/localssd/sunlingfeng/datasets/local/libero_abs_action_6d",
 ):
-    """Build the abs_action_6d LeRobot dataset."""
-    build_dataset(Path(cache_dir), Path(output_root), repo_id)
+    build_dataset(Path(source_root), Path(cache_dir), Path(output_root))
 
 
 if __name__ == "__main__":
