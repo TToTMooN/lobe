@@ -42,6 +42,10 @@ See `.claude/projects/-home-lingfeng-playground-lobe/memory/MEMORY.md` for detai
 | pi0-FAST (published) | 3B | 82.5% | — | — | — | batch=32, 20k steps |
 | pi0.5 (published) | 3B | 97.5% | — | — | — | batch=32×8GPU, 6k steps |
 | X-VLA (published) | 0.9B | 98.1% | — | — | — | ~30k steps |
+| **X-VLA v10 (ours)** | 0.9B | 69.75% | 42% | 55min (8×H100) | 6.2 | Fine-tune of 2toINF/X-VLA-Pt on rel2abs-converted HuggingFaceVLA/libero (20k steps, batch 64). Per-suite: spatial 72% / object 90% / goal 75% / libero_10 42%. |
+| **X-VLA v11 (ours)** | 0.9B | 72.25% | 50% | 3h40m (8×H100) | 4.6 | V10 + paper recipe match: 60k steps (3× more), batch 128 (2× larger), data aug (ColorJitter + RandomAffine + SharpnessJitter). Per-suite: spatial 80 / object 84 / goal 75 / libero_10 50. Small +2.5 avg — libero_10 gains offset by object regression. |
+| **X-VLA v12 (ours)** | 0.9B | 84.00% | 72% | 3h40m (8×H100) | 4.6 | V11 + train on `2toINF/Libero-XVLA-format` (upstream OpenVLA-regenerated LIBERO with precomputed abs_action_6d — **eliminates 5-30 mm nearest-neighbor offset** in training targets). Per-suite: spatial 83 / object 93 / goal 88 / libero_10 72. +11.75 over V11 (including +22 on libero_10). |
+| **X-VLA v14 (ours) — v1.0 recipe** | 0.9B | **85.75%** | 69% | 3h40m (8×H100) | 4.6 | V12 + **constant LR** (`--policy.scheduler_decay_lr=1e-4` = peak, via `policy.*` flag to bypass the preset-overwrite in `TrainPipelineConfig.validate()` that had silently ignored all our `--scheduler.*` / `--optimizer.*` args since V11) + `weight_decay=0.01` + `grad_clip_norm=1.0`. Per-suite: **spatial 86 / object 95 / goal 93** / libero_10 69. +1.75 over V12. Gap to paper: 12.35 pp. **Final v1.0 reproduction recipe** — see `docs/workflows/xvla_finetune.md`. |
 
 #### Training Speed Benchmarks (8×H100, LIBERO dataset)
 | Model | Batch/GPU | Eff. Batch | updt_s | data_s | Steps/s | Samples/s | GPU Mem | Notes |

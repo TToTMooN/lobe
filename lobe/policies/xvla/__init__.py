@@ -1,3 +1,2 @@
-"""LOBE X-VLA: local source + custom libero adapter."""
-# Import to register LiberoXVLAAdapterStep
-from lobe.policies.xvla import libero_xvla_adapter  # noqa: F401
+"""LOBE X-VLA package. X-VLA itself lives in lerobot; this package exists so
+`import lobe` triggers our patch registration via `lobe/__init__.py`."""
