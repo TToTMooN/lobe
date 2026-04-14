@@ -53,6 +53,7 @@ nav:
   - Architecture: architecture.md
   - Workflows:
       - Training: workflows/training.md
+      - Fine-tune X-VLA: workflows/xvla_finetune.md
       - Evaluation: workflows/evaluation.md
       - Serving: workflows/serving.md
   - Policies:

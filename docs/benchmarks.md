@@ -16,6 +16,7 @@ All results from `lobe-eval` on LIBERO with the standard 4-suite protocol (`libe
 | pi0-FAST | published | **82.5%** | — | — | — | — | — | batch=32, 20k |
 | pi0.5 | published | **97.5%** | — | — | — | — | — | batch=32×8GPU, 6k |
 | X-VLA | published | **98.1%** | — | — | — | — | — | ~30k steps |
+| **X-VLA** | **ours v1.0 (V14)** | **85.75%** | **86** | **95** | **93** | 69 | 3h40m (8×H100) | batch=128, 60k, constant LR 1e-4, upstream `2toINF/Libero-XVLA-format` |
 
 ## Key findings
 
@@ -23,6 +24,7 @@ All results from `lobe-eval` on LIBERO with the standard 4-suite protocol (`libe
 2. **Scaled config (80.5%) nearly matches paper config (82%) in 1/3 the time** thanks to linear LR scaling and bf16.
 3. **DP and FM match within 3%** when given the same architecture and hyperparameters — confirming flow matching ≈ diffusion when controlled.
 4. **Bad hyperparameters break both DP and FM equally**. The 33–37% h2h numbers are not a flaw of either method, just a sign that batch=256 + LR=4e-4 + 25k steps is the wrong recipe for these smaller policies.
+5. **X-VLA v1.0 (85.75%) closes most of the gap** to the paper's 98.1%. See [Fine-tune X-VLA](workflows/xvla_finetune.md) for the full recipe. The remaining 12 pp gap is concentrated on libero_10 (long-horizon); adding libero_90 as auxiliary training data is the current v1.1-dev experiment.
 
 ## Training speed (8×H100, LIBERO)
 

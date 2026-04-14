@@ -85,12 +85,14 @@ MUJOCO_GL=osmesa lerobot-eval \
 | pi0-FAST | published | 3B | **82.5%** | — | — | — | — | — | batch=32, 20k |
 | pi0.5 | published | 3B | **97.5%** | — | — | — | — | — | batch=32×8GPU, 6k |
 | X-VLA | published | 0.9B | **98.1%** | — | — | — | — | — | ~30k steps |
+| **X-VLA** | **ours v1.0 (V14)** | 0.9B | **85.75%** | **86** | **95** | **93** | 69 | 3h40m (8×H100) | batch=128, 60k, constant LR 1e-4, upstream `2toINF/Libero-XVLA-format` data. See `docs/workflows/xvla_finetune.md`. |
 
 **Key observations:**
 - Our SmolVLA (80.5-82%) significantly beats the official HF checkpoint (62.8%) on our eval
 - The ~5% gap to published (87.3%) is likely osmesa rendering + mujoco version (see eval notes)
 - Diffusion v3 failed (40.3%) — batch=256 is too large for diffusion on LIBERO. Needs proper hyperparameter search.
 - Scaled SmolVLA (1.5h) is nearly as good as paper config (4h) — great efficiency
+- X-VLA v1.0 hit 85.75% (vs paper 98.1%) by training on `2toINF/Libero-XVLA-format` (upstream precomputed `abs_action_6d`) with constant LR post-warmup. Biggest remaining gap is on libero_10 (long-horizon) where we're at 69% — likely helped by adding libero_90 auxiliary training data, which is the current v1.1 experiment.
 
 ### LIBERO-10 (10 mixed tasks, harder, separate from standard eval)
 

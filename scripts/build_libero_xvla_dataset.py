@@ -39,7 +39,7 @@ import torch
 _orig_load = torch.load
 torch.load = lambda *a, **k: _orig_load(*a, **{**k, "weights_only": False})
 
-SUITES = ("libero_spatial", "libero_object", "libero_goal", "libero_10")
+DEFAULT_SUITES = ("libero_spatial", "libero_object", "libero_goal", "libero_10")
 
 
 def quat_xyzw_to_mat(q: np.ndarray) -> np.ndarray:
@@ -74,12 +74,12 @@ def build_state_20d(eef_pos: np.ndarray, eef_quat_xyzw: np.ndarray) -> np.ndarra
     return np.concatenate([proprio_10d, zeros_10d], axis=-1)
 
 
-def build_task_index() -> dict[str, tuple[str, int]]:
+def build_task_index(suites: tuple[str, ...]) -> dict[str, tuple[str, int]]:
     """Map task.language.lower() → (suite_name, task_id)."""
     from libero.libero.benchmark import get_benchmark
 
     idx: dict[str, tuple[str, int]] = {}
-    for suite in SUITES:
+    for suite in suites:
         bm = get_benchmark(suite)()
         for tid in range(len(bm.tasks)):
             idx[bm.get_task(tid).language.strip().lower()] = (suite, tid)
@@ -102,7 +102,18 @@ def main(
     src_root: str = "/mnt/localssd/sunlingfeng/datasets/libero_xvla_format",
     out_root: str = "/mnt/localssd/sunlingfeng/datasets/local/libero_xvla_v12",
     repo_id: str = "local/libero_xvla_v12",
+    include_libero_90: bool = False,
 ) -> None:
+    """Build a LeRobot v3.0 dataset from 2toINF/Libero-XVLA-format HDF5 demos.
+
+    Args:
+        include_libero_90: if True, also include the libero_90 suite (3924 extra
+            demos) alongside the 4 fine-tune suites (spatial/object/goal/10).
+            Used for the V15+ experiments that test libero_90 aux pretraining.
+    """
+    suites = DEFAULT_SUITES + (("libero_90",) if include_libero_90 else ())
+    logger.info(f"Suites to convert: {suites}")
+
     # Clear any previous output
     import shutil
     if Path(out_root).exists():
@@ -156,13 +167,13 @@ def main(
         use_videos=False,
     )
 
-    task_idx = build_task_index()
+    task_idx = build_task_index(suites)
     logger.info(f"Indexed {len(task_idx)} LIBERO tasks")
 
     # Enumerate demo HDF5s
     src = Path(src_root)
     demos: list[tuple[Path, str]] = []  # (path, task_language)
-    for suite in SUITES:
+    for suite in suites:
         suite_dir = src / suite
         if not suite_dir.exists():
             logger.warning(f"Missing suite dir: {suite_dir}")
