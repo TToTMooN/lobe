@@ -133,6 +133,17 @@ Key points:
 - **`action_mode=auto`** — correct for single-arm LIBERO's native 10-D action. The 20-D `ee6d` mode is for dual-arm or for embodiment-mixed pretraining; zero-padding single-arm to 20-D to use it would just add noise.
 - **`optimizer_betas` can't be set from CLI** due to a draccus tuple-parsing issue; the v1.0 recipe uses lerobot default `(0.9, 0.99)` instead of paper `(0.9, 0.95)`. Small difference, not a priority. If you need it, edit `XVLAConfig.optimizer_betas` in the checkpoint's `config.json` before launching.
 
+## Inference knobs
+
+Two eval-time policy config values move accuracy without retraining. Both can be set in the checkpoint's `config.json` before loading (or via `--policy.*` at `lobe-eval` time if the CLI parsing accepts the field). Measured on V16 checkpoint against 4-suite LIBERO eval:
+
+| Knob | Default | Alternative | Effect vs default |
+|---|---|---|---|
+| `num_denoising_steps` | 10 | **20** | **+0.75 avg, +7 on libero_10, −2 on spatial/goal**. More ODE refinement per chunk prediction reduces per-step action error, which matters most for long-horizon multi-step sequences where errors compound. This is our current best (V17b, 91.25% avg). |
+| `n_action_steps` | 30 | 10 | −0.75 avg, +4 on goal, −5 on libero_10. Shorter open-loop execution re-predicts more often, helping precise target matching (goal) but introducing incoherence on long multi-step sequences (libero_10). Net loss. |
+
+**Rule of thumb**: bump `num_denoising_steps` to 20 if inference latency is not a concern (2× forward passes per chunk). Leave `n_action_steps` at chunk_size=30 unless your task is mostly single-goal precision work.
+
 ## Evaluation
 
 ```bash

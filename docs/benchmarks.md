@@ -18,7 +18,8 @@ All results from `lobe-eval` on LIBERO with the standard 4-suite protocol (`libe
 | X-VLA | published | **98.1%** | — | — | — | — | — | ~30k steps |
 | **X-VLA** | **ours v1.0 (V14)** | 85.75% | 86 | 95 | 93 | 69 | 3h40m (8×H100) | batch=128, 60k, constant LR 1e-4, upstream `2toINF/Libero-XVLA-format` |
 | **X-VLA** | **ours v1.1 (V15)** | 87.00% | 88 | 93 | 81 | 86 | 3h40m (8×H100) | V14 + libero_90 aux data (5525 total eps). +17 libero_10, -12 goal. Net +1.25 avg. |
-| **X-VLA** | **ours v1.2 (V16)** | **90.50%** | **91** | **97** | **91** | 83 | 5h30m cumulative | Two-stage: V15 + continue 30k on V12 only. Goal recovers to 91, spatial 91 / object 97 new highs. Gap to paper 7.6 pp. |
+| **X-VLA** | **ours v1.2 (V16)** | 90.50% | 91 | 97 | 91 | 83 | 5h30m cumulative | Two-stage: V15 + continue 30k on V12 only. Goal recovers to 91, spatial 91 / object 97 new highs. Gap to paper 7.6 pp. |
+| **X-VLA** | **ours v1.3 (V17b)** | **91.25%** | 89 | 97 | 89 | **90** | V16 + eval tweak | V16 + eval-time `num_denoising_steps=20`. libero_10 +7 from doubled flow-matching ODE refinement. Gap 6.85 pp. |
 
 ## Key findings
 
