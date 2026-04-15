@@ -82,7 +82,18 @@ version at `/mnt/localssd/sunlingfeng/checkpoints/xvla-pt-v8` with:
 You can regenerate it from `2toINF/X-VLA-Pt` by applying those edits. For LOBE's
 own experiments, just use the existing `xvla-pt-v8` directory.
 
-## Launch command (v1.0 recipe — 85.75% LIBERO avg)
+## Recommended recipe (v1.2 — 90.5% LIBERO avg)
+
+The best result LOBE produced on LIBERO uses **two-stage training**:
+
+1. **Stage 1** (60k steps, ~3h40m on 8×H100): broad pretrain on `local/libero_all_v15`, which is the full `2toINF/Libero-XVLA-format` dataset (5,525 episodes across all 5 suites including libero_90). Uses the V14 recipe below. Output: `xvla-libero-v15`.
+2. **Stage 2** (30k steps, ~1h50m on 8×H100): continue from `xvla-libero-v15/checkpoints/060000/pretrained_model` on the narrower `local/libero_xvla_v12` dataset (1,692 episodes, only the 4 eval fine-tune suites). Output: `xvla-libero-v16`.
+
+Stage 1 learns long-horizon skills from libero_90 (libero_10 score goes 69 → 86). Stage 2 re-aligns the goal-conditioned policy on the 4 eval suites (goal score recovers 81 → 91), while libero_10 retains most of stage 1's gains because the model has already internalized the long-horizon motor skills. See [Benchmarks](../benchmarks.md) for V10→V16 progression and per-suite deltas.
+
+Stage 2 uses the same launch command as stage 1 except for `--policy.path` (points at the stage 1 60k checkpoint), `--steps=30000`, `--policy.scheduler_decay_steps=30000`, `--policy.scheduler_warmup_steps=500` (shorter warmup for a warm start from the already-trained model), and a different `--output_dir`.
+
+## Stage 1 launch command (same as v1.0 single-stage recipe — 85.75% if used alone)
 
 ```bash
 MUJOCO_GL=osmesa .venv/bin/accelerate-launch --num_processes=8 --mixed_precision=bf16 \
