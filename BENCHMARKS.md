@@ -85,7 +85,8 @@ MUJOCO_GL=osmesa lerobot-eval \
 | pi0-FAST | published | 3B | **82.5%** | — | — | — | — | — | batch=32, 20k |
 | pi0.5 | published | 3B | **97.5%** | — | — | — | — | — | batch=32×8GPU, 6k |
 | X-VLA | published | 0.9B | **98.1%** | — | — | — | — | — | ~30k steps |
-| **X-VLA** | **ours v1.0 (V14)** | 0.9B | **85.75%** | **86** | **95** | **93** | 69 | 3h40m (8×H100) | batch=128, 60k, constant LR 1e-4, upstream `2toINF/Libero-XVLA-format` data. See `docs/workflows/xvla_finetune.md`. |
+| **X-VLA** | **ours v1.0 (V14)** | 0.9B | 85.75% | 86 | 95 | 93 | 69 | 3h40m (8×H100) | batch=128, 60k, constant LR 1e-4, upstream `2toINF/Libero-XVLA-format` data. See `docs/workflows/xvla_finetune.md`. |
+| **X-VLA** | **ours v1.1 (V15)** | 0.9B | **87.00%** | **88** | **93** | 81 | **86** | 3h40m (8×H100) | V14 + libero_90 aux data (5525 total eps, 3.3× V14). +17 libero_10 from diverse long-horizon scenes, -12 goal from diluted goal-conditioning. Net +1.25 avg. |
 
 **Key observations:**
 - Our SmolVLA (80.5-82%) significantly beats the official HF checkpoint (62.8%) on our eval
