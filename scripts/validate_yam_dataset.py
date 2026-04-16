@@ -12,11 +12,18 @@ Usage:
     uv run python scripts/validate_yam_dataset.py ttotmoon/yam_pick_up_grey_cube
     uv run python scripts/validate_yam_dataset.py --local /path/to/dataset
     uv run python scripts/validate_yam_dataset.py ttotmoon/yam_pick_up_grey_cube --create-tag
+    uv run python scripts/validate_yam_dataset.py ttotmoon/yam_pick_up_grey_cube --rebuild-stats
     uv run python scripts/validate_yam_dataset.py ttotmoon/yam_pick_up_grey_cube --output-json report.json
 
-The `--create-tag` flag creates the missing `v<codebase_version>` tag on the
-HF repo if LeRobotDataset rejects the dataset for lack of a version tag. This
-is a shared-state write action and is opt-in.
+Fixer flags (opt-in, only applied on failure):
+- `--create-tag` creates the `v<codebase_version>` tag on the HF repo when
+  LeRobotDataset rejects the dataset for lack of a version tag. Shared-state
+  write.
+- `--rebuild-stats` aggregates per-episode stats (from the episodes parquet)
+  into a fresh meta/stats.json in the local cache. Needed because limb's
+  exporter currently writes a top-level stats.json without image/video
+  features, which makes lerobot-train KeyError on any camera key. Local-only
+  write; does not push to HF.
 """
 
 from __future__ import annotations
@@ -35,7 +42,6 @@ from loguru import logger
 # instantiation can touch video metadata before we ever sample a frame, so
 # import this before anything from lerobot.
 import lobe.video_compat  # noqa: F401
-
 
 STATE_NAMES = [
     "left_joint_0", "left_joint_1", "left_joint_2", "left_joint_3", "left_joint_4", "left_joint_5",
@@ -72,6 +78,78 @@ def _create_version_tag(repo_id: str, tag: str) -> None:
     logger.info("Tag created.")
 
 
+def _check_stats_completeness(info: dict, stats: dict | None) -> list[str]:
+    """Top-level stats.json must have an entry for every dataset feature,
+    including video features. Lerobot uses VISUAL: MEAN_STD normalization and
+    will KeyError if a camera feature is missing."""
+    if stats is None:
+        return ["meta/stats.json missing entirely"]
+    missing = []
+    for key, ft in info.get("features", {}).items():
+        if key in {"timestamp", "frame_index", "episode_index", "index", "task_index"}:
+            continue
+        if key not in stats:
+            missing.append(f"{key} ({ft.get('dtype')})")
+    return missing
+
+
+def _rebuild_stats_from_episodes(ds_root: Path, info: dict) -> dict:
+    """Aggregate per-episode stats (stored in meta/episodes/...parquet under
+    stats/<feature>/<stat>) into a top-level stats dict.
+
+    Mirrors the aggregation done during v2.1→v3.0 conversion in
+    lerobot.datasets.dataset_tools (~line 848). Needed when limb's data writer
+    produces a top-level stats.json without image/video features.
+    """
+    from lerobot.datasets.compute_stats import aggregate_stats
+
+    episodes_df = pq.read_table(ds_root / "meta/episodes/chunk-000/file-000.parquet").to_pandas()
+    features = info["features"]
+
+    all_stats: list[dict[str, dict]] = []
+    for _, row in episodes_df.iterrows():
+        episode_stats: dict[str, dict] = {}
+        for col in episodes_df.columns:
+            if not col.startswith("stats/"):
+                continue
+            parts = col[len("stats/") :].split("/")
+            if len(parts) != 2:
+                continue
+            feature_name, stat_name = parts
+            value = row[col]
+
+            if feature_name in features:
+                dtype = features[feature_name]["dtype"]
+                if dtype in ("image", "video") and stat_name != "count":
+                    # Same nested-array unnesting pattern as lerobot's v2→v3 converter.
+                    if isinstance(value, np.ndarray) and value.dtype == object:
+                        flat: list[float] = []
+                        for item in value:
+                            while isinstance(item, np.ndarray):
+                                item = item.flatten()[0]
+                            flat.append(item)
+                        value = np.array(flat, dtype=np.float64).reshape(3, 1, 1)
+                    elif isinstance(value, np.ndarray) and value.shape == (3,):
+                        value = value.reshape(3, 1, 1)
+                else:
+                    if isinstance(value, np.ndarray) and value.dtype == object:
+                        value = np.array([float(v) for v in value], dtype=np.float64)
+                    elif not isinstance(value, np.ndarray):
+                        value = np.array(value, dtype=np.float64)
+
+            episode_stats.setdefault(feature_name, {})[stat_name] = value
+        all_stats.append(episode_stats)
+
+    aggregated = aggregate_stats(all_stats)
+    return {k: v for k, v in aggregated.items() if k in features}
+
+
+def _write_stats(stats: dict, ds_root: Path) -> None:
+    from lerobot.datasets.io_utils import write_stats
+
+    write_stats(stats, ds_root)
+
+
 def _fetch_info(repo_id: str, local_root: Path | None) -> dict:
     if local_root is not None:
         return json.loads((local_root / "meta/info.json").read_text())
@@ -94,7 +172,7 @@ def _check_info_schema(info: dict, report: dict) -> None:
     if state.get("dtype") != "float32" or state.get("shape") != [EXPECTED_STATE_DIM]:
         problems.append(f"observation.state dtype/shape = {state.get('dtype')}/{state.get('shape')}")
     if state.get("names") != STATE_NAMES:
-        problems.append(f"observation.state.names != canonical YAM names")
+        problems.append("observation.state.names != canonical YAM names")
 
     action = features.get("action", {})
     if action.get("dtype") != "float32" or action.get("shape") != [EXPECTED_ACTION_DIM]:
@@ -240,6 +318,11 @@ def main() -> int:
     )
     parser.add_argument("--local", type=Path, default=None, help="Local dataset root (skip HF download)")
     parser.add_argument("--create-tag", action="store_true", help="If version tag is missing, create it on HF")
+    parser.add_argument(
+        "--rebuild-stats",
+        action="store_true",
+        help="If meta/stats.json is missing camera stats, rebuild it locally from per-episode stats",
+    )
     parser.add_argument("--output-json", type=Path, default=None, help="Write structured report to JSON")
     args = parser.parse_args()
 
@@ -288,6 +371,31 @@ def main() -> int:
         logger.info(f"LeRobotDataset load: PASS (num_episodes={ds.num_episodes}, num_frames={ds.num_frames})")
         _check_lerobot_sample(ds, report)
 
+        missing_stats = _check_stats_completeness(info, ds.meta.stats)
+        report["stats_completeness"] = {"pass": not missing_stats, "missing": missing_stats}
+        if missing_stats:
+            logger.error(f"stats.json missing entries: {missing_stats}")
+            if args.rebuild_stats:
+                ds_root = Path(ds.meta.root)
+                logger.info(f"Rebuilding {ds_root}/meta/stats.json from per-episode stats...")
+                rebuilt = _rebuild_stats_from_episodes(ds_root, info)
+                _write_stats(rebuilt, ds_root)
+                logger.info(f"Rebuilt stats for {len(rebuilt)} features.")
+                # Re-verify.
+                ok2, msg2, ds2 = _try_lerobot_load(args.repo_id, args.local)
+                if ok2:
+                    missing2 = _check_stats_completeness(info, ds2.meta.stats)
+                    report["stats_completeness"] = {
+                        "pass": not missing2,
+                        "missing": missing2,
+                        "rebuilt": True,
+                    }
+                    logger.info(f"After rebuild: missing={missing2}")
+            else:
+                logger.warning("Rerun with --rebuild-stats to fix locally.")
+        else:
+            logger.info("stats_completeness: PASS")
+
     if args.local is not None:
         root = args.local
         parquet_path = root / "data/chunk-000/file-000.parquet"
@@ -308,7 +416,14 @@ def main() -> int:
 
     overall = all(
         report[k].get("pass", True)
-        for k in ("info_schema", "lerobot_load", "trajectory", "video_alignment", "episodes_meta")
+        for k in (
+            "info_schema",
+            "lerobot_load",
+            "trajectory",
+            "video_alignment",
+            "episodes_meta",
+            "stats_completeness",
+        )
         if k in report
     )
     report["overall_pass"] = overall
