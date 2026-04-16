@@ -69,3 +69,5 @@ nav:
       - Overview: roadmap/post_v1_methods.md
       - SimVLA technical: roadmap/simvla.md
       - X-VLA technical: roadmap/xvla.md
+  - Milestones:
+      - YAM multi-backbone pipeline (next): milestones/yam_multibackbone.md
