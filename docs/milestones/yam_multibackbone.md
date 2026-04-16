@@ -211,12 +211,12 @@ Total **5–7 days of elapsed wall time**. Critical path is Phases 0–3; Phases
 - **Not** building a mixture-of-configs inference layer (per the "best per-suite cherry-pick" observation from LIBERO V17). One config per deployment.
 - **Not** expanding to multi-task YAM data until at least one single-task pipeline produces a working on-robot policy. Diversity before multi-task-ness is premature abstraction.
 
-## Open questions for next session
+## Open questions — resolved 2026-04-16
 
-1. **SmolVLA action head**: which of the two action-mismatch options (model surgery vs new-head-on-frozen-encoder) does the user prefer? Phase 4 is a fork in the road.
-2. **Eval MSE threshold for pass/fail**: what MSE value corresponds to "ready for on-robot eval"? TBD from first DP run — we'll see the baseline MSE and can pick a threshold empirically.
-3. **YAM FK for SmolVLA EEF state**: does limb already have a forward-kinematics function exposed? If yes, Phase 4 option (2) becomes viable. If no, we stick with pad-and-trim.
-4. **Robot eval cadence**: how often do we go to the robot? Weekly? Only at milestone completion? This affects how tight Phase 3's MSE protocol needs to be.
+1. **SmolVLA action head**: **new-head-on-frozen-encoder**. Model surgery on a 450M pretrained network for 10 demos is fragile — one config-schema change upstream and we have to redo it. Treat SmolVLA as a frozen visual-language encoder; train a new 14-D action head on top of its penultimate embeddings. This is also closer to the original "foundation policy" framing of the SmolVLA paper.
+2. **Eval MSE threshold**: don't pre-pick. Phase 1 produces a DP baseline; its replay MSE becomes the reference. Any backbone with replay MSE ≤ 2× the DP baseline passes Phase 3 and advances to on-robot. This makes the threshold data-driven rather than arbitrary.
+3. **YAM FK for SmolVLA EEF state**: check limb's repo when Phase 4 starts; if FK is not exposed, file a separate issue on limb for it. In the meantime Phase 4 uses pad-and-trim — the state encoder treats padded dims as learned noise channels, which costs a bit of sample efficiency but does not block the pipeline.
+4. **Robot eval cadence**: manual, on-demand, batched. When any backbone reaches "Phase 3 pass" we schedule a robot session; no per-commit or per-epoch CI integration. The physical robot is the scarcest resource in the loop, so it stays outside the automated pipeline.
 
 ## References
 
