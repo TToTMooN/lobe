@@ -1,6 +1,7 @@
 timestamp	env	policy	backbone	norm	steps	batch_size	n_params	final_loss	success_rate	avg_reward	train_s	steps_per_s	samples_per_s	gpu	notes
 2026-03-27 13:25	aloha	flow_matching	transformer	MEAN_STD	100	256	15569326	1.049938	0.0%	0.001	403	0.2	64	NVIDIA H100 PCIe	validate_fm test 4
-2026-03-27 13:52	aloha	flow_matching	transformer	MEAN_STD	25000	256	15569326	0.046307	0.0%	0.000	1418	17.6	4513	NVIDIA H100 PCIe	
+2026-03-27 13:52	aloha	flow_matching	transformer	MEAN_STD	25000	256	15569326	0.046307	0.0%	0.000	1418	17.6	4513	NVIDIA H100 PCIe
+2026-04-18 10:51	yam_grey_cube	diffusion	resnet18+unet1d	MIN_MAX	50000	64	270780206	0.061	—	—	156171	0.32	20	8xH100	Phase 1 DP v0. Video decode bottleneck (3 cam PyAV): 43h vs 2h expected. Loss 1.024→0.061 (step 100→900). Checkpoints at 10k–50k. wandb dexforge/lobe-yam/6idz66lz
 2026-03-27 13:58	aloha_transfer_cube	flow_matching	transformer	MEAN_STD	25000	256	15569326	0.046000	0.0%	0.000	1418	17.6	4513	H100	v2: MEAN_STD norm + transformer backbone
 2026-03-28 03:59	pusht	flow_matching	transformer	MEAN_STD	2100	256	0	0.257000	0.0%	0.000	810	2.6	664	NVIDIA H100 80GB HBM3	KILLED at 2100/10000 to free GPU for 8-GPU SmolVLA. Loss converging well. Previous runs verified 40-60%.
 2026-03-28 04:07	libero	smolvla	smolvla_base		21	512	450046176	0.000000	0.0%	0.000	91	0.2	118	8xH100 80GB	KILLED: batch=64/GPU was wrong (effective=512). Restarted with batch=8/GPU (effective=64) to match published config.

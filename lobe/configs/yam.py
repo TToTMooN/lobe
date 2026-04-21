@@ -101,6 +101,52 @@ class YAMDiffusionConfig(YAMBaseConfig):
         ]
 
 
+@dataclass
+class YAMFlowMatchingConfig(YAMBaseConfig):
+    """Flow Matching on YAM — same architecture as DP, ODE head instead of DDPM."""
+
+    output_dir: str = "checkpoints/yam-grey-cube-fm-v0"
+    job_name: str = "yam-grey-cube-fm-v0"
+
+    horizon: int = 16
+    n_obs_steps: int = 2
+    n_action_steps: int = 8
+    vision_backbone: str = "resnet18"
+    pretrained_backbone_weights: str = "ResNet18_Weights.IMAGENET1K_V1"
+    use_group_norm: bool = False
+    resize_shape: tuple[int, int] = (240, 320)
+    crop_ratio: float = 1.0
+    # Match DP's UNet backbone and channel dims for a fair comparison.
+    backbone: str = "unet1d"
+    down_dims: str = "512,1024,2048"
+    num_inference_steps: int = 10
+    optimizer_lr: float = 1e-4
+    optimizer_weight_decay: float = 1e-6
+    scheduler_warmup_steps: int = 500
+
+    def to_launch_args(self) -> list[str]:
+        return [
+            *self.base_args(),
+            "--policy.type=flow_matching",
+            f"--policy.horizon={self.horizon}",
+            f"--policy.n_obs_steps={self.n_obs_steps}",
+            f"--policy.n_action_steps={self.n_action_steps}",
+            f"--policy.vision_backbone={self.vision_backbone}",
+            f"--policy.pretrained_backbone_weights={self.pretrained_backbone_weights}",
+            f"--policy.resize_shape=[{self.resize_shape[0]},{self.resize_shape[1]}]",
+            f"--policy.crop_ratio={self.crop_ratio}",
+            f"--policy.use_group_norm={str(self.use_group_norm).lower()}",
+            f"--policy.backbone={self.backbone}",
+            f"--policy.down_dims=[{self.down_dims}]",
+            f"--policy.num_inference_steps={self.num_inference_steps}",
+            f"--policy.optimizer_lr={self.optimizer_lr}",
+            f"--policy.optimizer_weight_decay={self.optimizer_weight_decay}",
+            f"--policy.scheduler_warmup_steps={self.scheduler_warmup_steps}",
+            "--policy.push_to_hub=false",
+        ]
+
+
 PRESETS: dict[str, YAMBaseConfig] = {
     "yam_grey_cube_diffusion": YAMDiffusionConfig(),
+    "yam_grey_cube_flow_matching": YAMFlowMatchingConfig(),
 }
