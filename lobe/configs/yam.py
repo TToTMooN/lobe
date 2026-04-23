@@ -146,7 +146,50 @@ class YAMFlowMatchingConfig(YAMBaseConfig):
         ]
 
 
+@dataclass
+class YAMXVLAConfig(YAMBaseConfig):
+    """X-VLA fine-tune on YAM — V14 LIBERO recipe adapted for 14-D joint space."""
+
+    dataset_repo_id: str = "local/yam_pick_up_grey_cube_image"
+    dataset_root: str = "/home/sunlingfeng/.cache/huggingface/lerobot/local/yam_pick_up_grey_cube_image"
+    output_dir: str = "checkpoints/yam-grey-cube-xvla-v0"
+    job_name: str = "yam-grey-cube-xvla-v0"
+    batch_size: int = 16
+    steps: int = 20_000
+    save_freq: int = 5_000
+
+    policy_path: str = "/mnt/localssd/sunlingfeng/checkpoints/xvla-pt-yam14"
+    chunk_size: int = 30
+    n_action_steps: int = 30
+    optimizer_lr: float = 1e-4
+    optimizer_weight_decay: float = 0.01
+    grad_clip_norm: float = 1.0
+    scheduler_warmup_steps: int = 500
+    scheduler_decay_steps: int = 20_000
+    scheduler_decay_lr: float = 1e-4
+
+    def to_launch_args(self) -> list[str]:
+        return [
+            *self.base_args(),
+            "--dataset.image_transforms.enable=true",
+            f"--policy.path={self.policy_path}",
+            "--policy.action_mode=auto",
+            f"--policy.chunk_size={self.chunk_size}",
+            f"--policy.n_action_steps={self.n_action_steps}",
+            "--policy.dtype=bfloat16",
+            "--policy.use_amp=false",
+            "--policy.push_to_hub=false",
+            f"--policy.optimizer_lr={self.optimizer_lr}",
+            f"--policy.optimizer_weight_decay={self.optimizer_weight_decay}",
+            f"--policy.optimizer_grad_clip_norm={self.grad_clip_norm}",
+            f"--policy.scheduler_warmup_steps={self.scheduler_warmup_steps}",
+            f"--policy.scheduler_decay_steps={self.scheduler_decay_steps}",
+            f"--policy.scheduler_decay_lr={self.scheduler_decay_lr}",
+        ]
+
+
 PRESETS: dict[str, YAMBaseConfig] = {
     "yam_grey_cube_diffusion": YAMDiffusionConfig(),
     "yam_grey_cube_flow_matching": YAMFlowMatchingConfig(),
+    "yam_grey_cube_xvla": YAMXVLAConfig(),
 }
