@@ -188,8 +188,38 @@ class YAMXVLAConfig(YAMBaseConfig):
         ]
 
 
+@dataclass
+class YAMSmolVLAConfig(YAMBaseConfig):
+    """SmolVLA fine-tune on YAM — frozen VLM encoder, trains action expert only."""
+
+    dataset_repo_id: str = "local/yam_pick_up_grey_cube_image"
+    dataset_root: str = "/home/sunlingfeng/.cache/huggingface/lerobot/local/yam_pick_up_grey_cube_image"
+    output_dir: str = "checkpoints/yam-grey-cube-smolvla-v0"
+    job_name: str = "yam-grey-cube-smolvla-v0"
+    batch_size: int = 32
+    steps: int = 20_000
+    save_freq: int = 5_000
+
+    policy_path: str = "lerobot/smolvla_base"
+    optimizer_lr: float = 1e-5
+    scheduler_warmup_steps: int = 500
+
+    def to_launch_args(self) -> list[str]:
+        return [
+            *self.base_args(),
+            "--dataset.image_transforms.enable=true",
+            f"--policy.path={self.policy_path}",
+            "--policy.push_to_hub=false",
+            f"--policy.optimizer_lr={self.optimizer_lr}",
+            f"--policy.scheduler_warmup_steps={self.scheduler_warmup_steps}",
+            # SmolVLA defaults: train_expert_only=True, freeze_vision_encoder=True
+            # max_state_dim=32, max_action_dim=32 (auto-pads 14-D YAM state/action)
+        ]
+
+
 PRESETS: dict[str, YAMBaseConfig] = {
     "yam_grey_cube_diffusion": YAMDiffusionConfig(),
     "yam_grey_cube_flow_matching": YAMFlowMatchingConfig(),
     "yam_grey_cube_xvla": YAMXVLAConfig(),
+    "yam_grey_cube_smolvla": YAMSmolVLAConfig(),
 }
