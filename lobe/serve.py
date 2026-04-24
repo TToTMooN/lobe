@@ -161,6 +161,22 @@ class PolicyServer:
         batch = self.preprocessor(batch)
 
         if self.config.chunk_mode:
+            # Policies with internal observation queues (DP, FM) need them populated
+            # before predict_action_chunk works. select_action handles this via
+            # populate_queues; predict_action_chunk reads from them directly.
+            from lerobot.policies.utils import populate_queues
+
+            if hasattr(self.policy, "_queues"):
+                if "action" in batch:
+                    batch.pop("action")
+                if self.policy.config.image_features:
+                    batch = dict(batch)
+                    obs_images_key = "observation.images"
+                    img_keys = list(self.policy.config.image_features.keys())
+                    if img_keys and img_keys[0] in batch:
+                        batch[obs_images_key] = torch.stack([batch[k] for k in img_keys], dim=-4)
+                self.policy._queues = populate_queues(self.policy._queues, batch)
+
             kwargs = {}
             if self.rtc_enabled:
                 kwargs["prev_chunk_left_over"] = self._prev_chunk
@@ -170,7 +186,6 @@ class PolicyServer:
             try:
                 actions = self.policy.predict_action_chunk(batch, **kwargs)
             except TypeError:
-                # Policy doesn't accept RTC kwargs — fall back to plain chunk inference
                 actions = self.policy.predict_action_chunk(batch)
 
             # actions shape: (1, horizon, action_dim) → strip batch dim
@@ -211,7 +226,10 @@ class PolicyServer:
                 infer_s = time.perf_counter() - t_infer
                 self._record_latency(infer_s)
 
-                actions_np = actions.cpu().numpy() if isinstance(actions, torch.Tensor) else np.asarray(actions)
+                if isinstance(actions, torch.Tensor):
+                    actions_np = actions.cpu().float().numpy()
+                else:
+                    actions_np = np.asarray(actions)
                 if actions_np.ndim == 1:
                     actions_np = actions_np.reshape(1, -1)
 
