@@ -50,6 +50,10 @@ class ServeConfig:
     port: int = 8000
     device: str = "cuda"
 
+    # Inference speed — override denoising/ODE steps for faster serving
+    num_inference_steps: int | None = None  # e.g. 10 for DDIM-10 (DP) or 3-5 for FM. None=use checkpoint default.
+    noise_scheduler_type: str | None = None  # e.g. "DDIM" for DP (default DDPM is 100 steps = 450ms)
+
     # Inference mode
     chunk_mode: bool = True  # Return full action chunk per inference (recommended for real robots)
 
@@ -299,8 +303,16 @@ def main():
         )
         logger.info(f"Set policy.rtc_config to {policy_cfg.rtc_config}")
 
+    # Override inference speed settings
+    if config.num_inference_steps is not None:
+        policy_cfg.num_inference_steps = config.num_inference_steps
+        logger.info(f"Override num_inference_steps={config.num_inference_steps}")
+    if config.noise_scheduler_type is not None and hasattr(policy_cfg, "noise_scheduler_type"):
+        policy_cfg.noise_scheduler_type = config.noise_scheduler_type
+        logger.info(f"Override noise_scheduler_type={config.noise_scheduler_type}")
+
     policy_cls = get_policy_class(policy_cfg.type)
-    policy = policy_cls.from_pretrained(config.checkpoint)
+    policy = policy_cls.from_pretrained(config.checkpoint, config=policy_cfg)
     policy.to(config.device)
     policy.eval()
 

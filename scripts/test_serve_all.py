@@ -70,19 +70,24 @@ async def test_client(port: int, backbone: str, timeout_s: float = 120.0) -> dic
                             f"action_horizon={meta.get('action_horizon')}, "
                             f"policy_type={meta.get('policy_type')}")
 
-                # Send synthetic observation
-                obs = make_synthetic_obs(backbone)
-                obs_packed = msgpack.packb(obs, use_bin_type=True, default=msgpack_numpy.encode)
-                await ws.send(obs_packed)
+                # Send multiple observations for steady-state timing
+                n_warmup, n_measure = 3, 5
+                infer_times = []
+                actions = None
+                for i in range(n_warmup + n_measure):
+                    obs = make_synthetic_obs(backbone)
+                    obs_packed = msgpack.packb(obs, use_bin_type=True, default=msgpack_numpy.encode)
+                    await ws.send(obs_packed)
+                    resp_raw = await asyncio.wait_for(ws.recv(), timeout=60)
+                    resp = msgpack.unpackb(resp_raw, raw=False, object_hook=msgpack_numpy.decode)
+                    actions = np.asarray(resp["actions"])
+                    if i >= n_warmup:
+                        infer_times.append(resp.get("timing", {}).get("infer_ms", 0))
 
-                # Receive action
-                resp_raw = await asyncio.wait_for(ws.recv(), timeout=60)
-                resp = msgpack.unpackb(resp_raw, raw=False, object_hook=msgpack_numpy.decode)
-
-                actions = np.asarray(resp["actions"])
-                timing = resp.get("timing", {})
+                median_ms = float(np.median(infer_times))
                 logger.info(f"  [{backbone}] actions shape: {actions.shape}, "
-                            f"infer_ms={timing.get('infer_ms', '?')}")
+                            f"steady-state infer: {median_ms:.1f}ms "
+                            f"(warmup={n_warmup}, measured={n_measure})")
 
                 return {
                     "backbone": backbone,
@@ -90,7 +95,7 @@ async def test_client(port: int, backbone: str, timeout_s: float = 120.0) -> dic
                     "action_shape": list(actions.shape),
                     "action_dim": int(actions.shape[-1]),
                     "action_horizon": int(actions.shape[0]) if actions.ndim == 2 else 1,
-                    "infer_ms": timing.get("infer_ms"),
+                    "infer_ms": median_ms,
                     "metadata": meta,
                 }
         except (ConnectionRefusedError, OSError):
@@ -109,12 +114,20 @@ def test_one_checkpoint(backbone: str, checkpoint: str, port: int, gpu: int) -> 
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu)
 
+    # Fast inference overrides per backbone
+    extra_args = []
+    if backbone in ("dp",):
+        extra_args += ["--noise-scheduler-type=DDIM", "--num-inference-steps=10"]
+    elif backbone in ("fm",):
+        extra_args += ["--num-inference-steps=5"]
+
     server_proc = subprocess.Popen(
         [
             sys.executable, "-m", "lobe.serve",
             f"--checkpoint={checkpoint}",
             f"--port={port}",
             "--chunk-mode",
+            *extra_args,
         ],
         env=env,
         stdout=subprocess.PIPE,
