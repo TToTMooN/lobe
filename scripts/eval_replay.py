@@ -31,14 +31,14 @@ import lobe  # noqa: F401 — register policies + patches
 import lobe.video_compat  # noqa: F401
 
 
-def load_policy(policy_path: str, ds_meta, device: str = "cuda"):
+def load_policy(policy_path: str, ds_meta, device: str = "cuda", rename_map: dict | None = None):
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.policies.factory import make_policy, make_pre_post_processors
 
     cfg = PreTrainedConfig.from_pretrained(policy_path)
     cfg.pretrained_path = policy_path
 
-    policy = make_policy(cfg=cfg, ds_meta=ds_meta)
+    policy = make_policy(cfg=cfg, ds_meta=ds_meta, rename_map=rename_map)
     policy.eval()
     policy.to(device)
 
@@ -130,7 +130,8 @@ def preload_episode(dataset, ep_idx: int, camera_keys: list[str]) -> dict:
 
 @torch.no_grad()
 def eval_episode(
-    policy, preprocessor, postprocessor, episode_data: dict, ep_idx: int, camera_keys: list[str]
+    policy, preprocessor, postprocessor, episode_data: dict, ep_idx: int,
+    camera_keys: list[str], rename_map: dict | None = None,
 ) -> dict:
     """Run policy frame-by-frame on a preloaded episode and compute error metrics."""
     n_frames = episode_data["n_frames"]
@@ -142,7 +143,8 @@ def eval_episode(
     for t in range(n_frames):
         obs: dict = {"observation.state": episode_data["observation.state"][t].unsqueeze(0)}
         for cam_key in camera_keys:
-            obs[cam_key] = episode_data[cam_key][t].unsqueeze(0)
+            out_key = rename_map.get(cam_key, cam_key) if rename_map else cam_key
+            obs[out_key] = episode_data[cam_key][t].unsqueeze(0)
         obs["task"] = episode_data["task"]
 
         obs = preprocessor(obs)
@@ -175,18 +177,23 @@ def main() -> int:
     parser.add_argument("--dataset.repo_id", dest="repo_id", default="ttotmoon/yam_pick_up_grey_cube")
     parser.add_argument("--dataset.root", dest="dataset_root", default=None)
     parser.add_argument("--eval_episodes", nargs="+", type=int, default=[8, 9])
+    parser.add_argument("--rename_map", type=str, default=None, help="JSON camera rename map")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--output-json", type=Path, default=None)
     args = parser.parse_args()
+
+    rename_map = json.loads(args.rename_map) if args.rename_map else {}
 
     logger.info(f"Loading dataset {args.repo_id}")
     dataset = load_dataset(args.repo_id, args.dataset_root)
 
     logger.info(f"Loading policy from {args.policy_path}")
-    policy, preprocessor, postprocessor = load_policy(args.policy_path, dataset.meta, args.device)
+    policy, preprocessor, postprocessor = load_policy(args.policy_path, dataset.meta, args.device, rename_map)
 
     camera_keys = [k for k in dataset.meta.features if k.startswith("observation.images.")]
     logger.info(f"Camera keys: {camera_keys}")
+    if rename_map:
+        logger.info(f"Rename map: {rename_map}")
 
     results = []
     for ep_idx in args.eval_episodes:
@@ -196,7 +203,7 @@ def main() -> int:
 
         logger.info(f"Episode {ep_idx}: preloading...")
         episode_data = preload_episode(dataset, ep_idx, camera_keys)
-        r = eval_episode(policy, preprocessor, postprocessor, episode_data, ep_idx, camera_keys)
+        r = eval_episode(policy, preprocessor, postprocessor, episode_data, ep_idx, camera_keys, rename_map)
         results.append(r)
         logger.info(
             f"  Episode {ep_idx}: MSE={r['mse']:.6f}  L_inf={r['linf']:.4f}  "
