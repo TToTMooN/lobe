@@ -1,6 +1,6 @@
 # Milestone: multi-backbone policy training on real limb YAM data
 
-**Status**: design — not yet implemented. Next session starts here.
+**Status**: Phases 0–5 complete. All 4 backbones trained, eval'd, and serving-verified on `yam_pick_up_grey_cube`.
 **Preceded by**: v1.3 X-VLA LIBERO reproduction (91.25% avg, see [X-VLA fine-tune](../workflows/xvla_finetune.md)).
 
 ## Goal

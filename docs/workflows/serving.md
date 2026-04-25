@@ -62,20 +62,23 @@ import websockets
 async def main():
     async with websockets.connect("ws://localhost:8000") as ws:
         meta = msgpack.unpackb(await ws.recv(), raw=False)
-        print(f"Connected: {meta['model_name']}")
+        print(f"Connected: {meta['model_name']}, action_dim={meta['action_dim']}")
 
+        # YAM bimanual: 14-D state, 3 cameras at 240x320
         obs = {
-            "state": np.zeros(8, dtype=np.float32),
+            "state": np.zeros(14, dtype=np.float32),
             "images": {
-                "camera1": np.random.randint(0, 255, (256, 256, 3), dtype=np.uint8),
-                "camera2": np.random.randint(0, 255, (256, 256, 3), dtype=np.uint8),
+                "head_camera": np.random.randint(0, 255, (240, 320, 3), dtype=np.uint8),
+                "left_wrist_camera": np.random.randint(0, 255, (240, 320, 3), dtype=np.uint8),
+                "right_wrist_camera": np.random.randint(0, 255, (240, 320, 3), dtype=np.uint8),
             },
-            "prompt": "pick up the bowl",
+            "prompt": "pick up the grey cube and hand it to another hand",
         }
         await ws.send(msgpack.packb(obs, use_bin_type=True, default=msgpack_numpy.encode))
 
         resp = msgpack.unpackb(await ws.recv(), raw=False, object_hook=msgpack_numpy.decode)
-        print(f"Action: {resp['actions'].shape}, infer={resp['timing']['infer_ms']}ms")
+        actions = resp["actions"]  # shape: (action_horizon, 14)
+        print(f"Action: {actions.shape}, infer={resp['timing']['infer_ms']:.0f}ms")
 
 asyncio.run(main())
 ```
@@ -128,9 +131,63 @@ When `rtc-inference-latency=0`, the server tracks recent inference times in a ro
 
 RTC requires the policy to support `predict_action_chunk()` with the `prev_chunk_left_over`, `inference_delay`, and `execution_horizon` kwargs.
 
+## Inference speed flags
+
+These reduce raw model forward-pass time. Use them when latency matters.
+
+```bash
+# DP: switch from DDPM-100 (450ms) to DDIM-10 (47ms) or DDIM-5 (35ms)
+lobe-serve --checkpoint=<dp_ckpt> --noise-scheduler-type=DDIM --num-inference-steps=10
+
+# FM: reduce ODE steps (default 10 → 5 or 3)
+lobe-serve --checkpoint=<fm_ckpt> --num-inference-steps=5
+
+# Any backbone: enable torch.compile (~1.3-10× speedup)
+lobe-serve --checkpoint=<ckpt> --compile
+```
+
+| Flag | Effect |
+|---|---|
+| `--num-inference-steps=N` | Override denoising/ODE steps |
+| `--noise-scheduler-type=DDIM` | Switch DP from DDPM to DDIM (fewer steps work) |
+| `--compile` | Enable torch.compile (adds ~60-240s warmup on first call) |
+
 ## Verified end-to-end
 
-We tested with the SmolVLA 450M checkpoint:
+### YAM (14-D bimanual joint-space, 3 cameras)
+
+Tested with `scripts/test_serve_all.py` — starts server, sends synthetic
+obs (14-D state + 3×240×320 images + task prompt), verifies action shape.
+
+```bash
+# Run all 4 backbones:
+uv run python scripts/test_serve_all.py
+
+# Run specific checkpoint:
+uv run python scripts/test_serve_all.py --checkpoints dp:checkpoints/yam-grey-cube-dp-v0/checkpoints/050000/pretrained_model
+```
+
+| Backbone | Action shape | Infer (no compile) | Infer (compiled) |
+|---|---|---|---|
+| FM (5-step Euler) | (8, 14) | 23 ms | **18 ms** |
+| SmolVLA (10 flow) | (50, 14) | 242 ms | **24 ms** |
+| DP (DDIM-10) | (8, 14) | 47 ms | **35 ms** |
+| X-VLA (10 flow) | (30, 14) | 81 ms | 78 ms |
+
+### Inference benchmark
+
+`scripts/bench_inference.py` measures raw forward-pass time (no deployment
+patterns — just model inference with CUDA sync and proper warmup).
+
+```bash
+# All backbones, compiled vs uncompiled:
+uv run python scripts/bench_inference.py --both
+
+# Single backbone:
+uv run python scripts/bench_inference.py --checkpoints fm:path/to/model --compile
+```
+
+### LIBERO (7-D single-arm, 2 cameras — original test)
 
 | Test | Mode | Result |
 |---|---|---|

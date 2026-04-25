@@ -5,85 +5,175 @@ LOBE's YAM pipeline takes a LeRobot v3.0 dataset collected by
 (a) replay-evaluated offline and (b) deployed on the robot via
 `lobe-serve`. Reference dataset: [`ttotmoon/yam_pick_up_grey_cube`](https://huggingface.co/datasets/ttotmoon/yam_pick_up_grey_cube).
 
-The four backbones roll out in phases (see
-[`docs/milestones/yam_multibackbone.md`](../milestones/yam_multibackbone.md)).
-**This doc currently covers Phase 1: Diffusion Policy**. FM, SmolVLA, X-VLA
-sections will land as the respective phases complete.
+Four backbones are supported (presets in `lobe/configs/yam.py`). All
+produce 14-D joint-space actions for the YAM bimanual robot.
 
-## Prerequisite: validate the dataset
+## Results (yam_pick_up_grey_cube, held-out episodes 8-9)
+
+| Backbone | Params | Replay MSE | Inference (compiled) | Train time |
+|----------|--------|------------|----------------------|------------|
+| **FM** | 275M | **0.00155** | **18 ms** | 2.6h |
+| **X-VLA** | 879M | 0.00247 | 78 ms | 2.0h |
+| **DP** | 271M | 0.01068 | 35 ms | 2h* |
+| **SmolVLA** | 450M (100M learnable) | 0.02785 | 24 ms | 1.0h |
+
+*DP trained on image-format dataset. Original video-format run took 43h.
+
+## Prerequisites
+
+### 1. Validate the dataset
 
 ```bash
 uv run python scripts/validate_yam_dataset.py ttotmoon/yam_pick_up_grey_cube
 ```
 
-Expected output: `overall: PASS` with 10 episodes / 10958 frames / 30 fps /
-3 cameras. If the script reports a missing `v3.0` tag on HF, rerun with
-`--create-tag` (requires write access to the HF repo).
+If `overall: FAIL`, use the fixer flags (`--create-tag`, `--rebuild-stats`).
 
-## Phase 1: Diffusion Policy
+### 2. Convert to image format (recommended)
 
-Preset: `yam_grey_cube_diffusion` in `lobe/configs/yam.py`. ImageNet-pretrained
-ResNet18 visual encoder shared across the 3 cameras, UNet1d temporal backbone,
-horizon 16 / n_action_steps 8 / n_obs_steps 2. Images are resized to 240x320
-(half the native 480x640, aspect ratio preserved) and not cropped — the YAM
-camera framing is already tight.
+Video-format datasets are ~20× slower to train on due to per-frame HEVC decode.
 
-### Launch (8x H100)
+```bash
+uv run python scripts/convert_yam_video_to_image.py \
+    --repo_id ttotmoon/yam_pick_up_grey_cube \
+    --output local/yam_pick_up_grey_cube_image \
+    --resize 240 320
+```
+
+Takes ~4 min. All launch commands below use the image-format dataset.
+
+## Diffusion Policy
+
+Preset: `yam_grey_cube_diffusion`. ImageNet-pretrained ResNet18 (shared
+across 3 cameras), UNet1d backbone, horizon 16, DDPM training / DDIM
+inference.
 
 ```bash
 .venv/bin/accelerate-launch --num_processes=8 --mixed_precision=bf16 \
   scripts/_lobe_train_entry.py \
-  --dataset.repo_id=ttotmoon/yam_pick_up_grey_cube \
+  --dataset.repo_id=local/yam_pick_up_grey_cube_image \
+  --dataset.root=$HOME/.cache/huggingface/lerobot/local/yam_pick_up_grey_cube_image \
   --policy.type=diffusion \
-  --policy.horizon=16 \
-  --policy.n_obs_steps=2 \
-  --policy.n_action_steps=8 \
+  --policy.horizon=16 --policy.n_obs_steps=2 --policy.n_action_steps=8 \
   --policy.vision_backbone=resnet18 \
   --policy.pretrained_backbone_weights=ResNet18_Weights.IMAGENET1K_V1 \
-  --policy.resize_shape=[240,320] \
-  --policy.crop_ratio=1.0 \
+  --policy.resize_shape=[240,320] --policy.crop_ratio=1.0 \
   --policy.use_group_norm=false \
-  --policy.optimizer_lr=1e-4 \
-  --policy.optimizer_weight_decay=1e-6 \
-  --policy.scheduler_warmup_steps=500 \
-  --policy.push_to_hub=false \
-  --batch_size=8 \
-  --num_workers=4 \
-  --steps=50000 \
-  --save_freq=10000 \
-  --log_freq=100 \
-  --eval_freq=0 \
-  --output_dir=checkpoints/yam-grey-cube-dp-v0 \
-  --job_name=yam-grey-cube-dp-v0
+  --policy.optimizer_lr=1e-4 --policy.optimizer_weight_decay=1e-6 \
+  --policy.scheduler_warmup_steps=500 --policy.push_to_hub=false \
+  --batch_size=8 --num_workers=4 --steps=50000 \
+  --save_freq=10000 --log_freq=100 --eval_freq=0 \
+  --output_dir=checkpoints/yam-grey-cube-dp-v0 --job_name=yam-grey-cube-dp-v0
 ```
 
-`batch_size=8 x 8 GPUs = 64` effective, matching the design-doc recipe.
-`eval_freq=0` disables in-training sim eval — YAM has no sim; the eval path is
-replay MSE (Phase 3) and on-robot (Phase 6).
+## Flow Matching
 
-### Why `--policy.optimizer_*` and not `--optimizer.*`
+Preset: `yam_grey_cube_flow_matching`. Same encoder as DP, UNet1d backbone
+with matching dims, Euler ODE solver (5 steps at inference).
 
-Same preset-overwrite trap documented in the X-VLA recipe — see the "Key points"
-section of [`xvla_finetune.md`](./xvla_finetune.md) for the full root-cause write-up.
-`TrainPipelineConfig.validate()` calls `policy.get_optimizer_preset()` when
-`use_policy_training_preset=True` (the default), which silently overwrites any
-`--optimizer.*` flags with the DP config's `optimizer_lr=1e-4` preset. Pass
-optimizer settings via `--policy.optimizer_*` to actually take effect.
+```bash
+.venv/bin/accelerate-launch --num_processes=8 --mixed_precision=bf16 \
+  scripts/_lobe_train_entry.py \
+  --dataset.repo_id=local/yam_pick_up_grey_cube_image \
+  --dataset.root=$HOME/.cache/huggingface/lerobot/local/yam_pick_up_grey_cube_image \
+  --policy.type=flow_matching \
+  --policy.horizon=16 --policy.n_obs_steps=2 --policy.n_action_steps=8 \
+  --policy.vision_backbone=resnet18 \
+  --policy.pretrained_backbone_weights=ResNet18_Weights.IMAGENET1K_V1 \
+  --policy.resize_shape=[240,320] --policy.crop_ratio=1.0 \
+  --policy.use_group_norm=false \
+  --policy.backbone=unet1d --policy.down_dims=[512,1024,2048] \
+  --policy.num_inference_steps=10 \
+  --policy.optimizer_lr=1e-4 --policy.optimizer_weight_decay=1e-6 \
+  --policy.scheduler_warmup_steps=500 --policy.push_to_hub=false \
+  --batch_size=9 --num_workers=4 --steps=50000 \
+  --save_freq=10000 --log_freq=100 --eval_freq=0 \
+  --output_dir=checkpoints/yam-grey-cube-fm-v1 --job_name=yam-grey-cube-fm-v1
+```
 
-### Expected metrics
+## X-VLA
 
-- Wall time: ~2h on 8x H100 (batch 64, 50k steps, bf16).
-- Training loss monotonically decreasing; no stable floor known yet — Phase 1
-  is the first DP run on real YAM data, so its final loss + Phase 3 replay MSE
-  jointly define the baseline that later backbones (FM, SmolVLA, X-VLA) will
-  be compared against.
+Preset: `yam_grey_cube_xvla`. Fine-tunes from `2toINF/X-VLA-Pt` (0.9B).
+`action_mode=auto` auto-pads 14-D actions to 20-D internally. Camera
+names must be remapped to X-VLA's expected `image/image2/image3`.
 
-## Phase 2 (coming): Flow Matching
+```bash
+.venv/bin/accelerate-launch --num_processes=8 --mixed_precision=bf16 \
+  scripts/_lobe_train_entry.py \
+  --dataset.repo_id=local/yam_pick_up_grey_cube_image \
+  --dataset.root=$HOME/.cache/huggingface/lerobot/local/yam_pick_up_grey_cube_image \
+  --dataset.image_transforms.enable=true \
+  --rename_map='{"observation.images.head_camera": "observation.images.image", "observation.images.left_wrist_camera": "observation.images.image2", "observation.images.right_wrist_camera": "observation.images.image3"}' \
+  --policy.path=/mnt/localssd/sunlingfeng/checkpoints/xvla-pt-yam14 \
+  --policy.action_mode=auto \
+  --policy.chunk_size=30 --policy.n_action_steps=30 \
+  --policy.dtype=bfloat16 --policy.use_amp=false --policy.push_to_hub=false \
+  --policy.optimizer_lr=1e-4 --policy.optimizer_weight_decay=0.01 \
+  --policy.optimizer_grad_clip_norm=1.0 \
+  --policy.scheduler_warmup_steps=500 \
+  --policy.scheduler_decay_steps=20000 --policy.scheduler_decay_lr=1e-4 \
+  --batch_size=16 --num_workers=4 --steps=20000 \
+  --save_freq=5000 --log_freq=100 --eval_freq=0 \
+  --output_dir=checkpoints/yam-grey-cube-xvla-v0 --job_name=yam-grey-cube-xvla-v0
+```
 
-Identical to the DP command above but with `--policy.type=flow_matching`. Head-
-to-head comparison on the same encoder and schedule.
+The `xvla-pt-yam14` checkpoint is a copy of `xvla-pt-v8` with
+`output_features.action.shape=[14]`. See
+[`xvla_finetune.md`](./xvla_finetune.md) for the V14 recipe details.
 
-## Phases 3-6 (coming)
+## SmolVLA
 
-See [`docs/milestones/yam_multibackbone.md`](../milestones/yam_multibackbone.md)
-for the full plan.
+Preset: `yam_grey_cube_smolvla`. Fine-tunes from `lerobot/smolvla_base`
+(450M, 100M learnable). Frozen VLM encoder, trains action expert only.
+14-D action auto-padded to 32 internally. Camera names → `camera1/2/3`.
+
+```bash
+.venv/bin/accelerate-launch --num_processes=4 --mixed_precision=bf16 \
+  scripts/_lobe_train_entry.py \
+  --dataset.repo_id=local/yam_pick_up_grey_cube_image \
+  --dataset.root=$HOME/.cache/huggingface/lerobot/local/yam_pick_up_grey_cube_image \
+  --dataset.image_transforms.enable=true \
+  --rename_map='{"observation.images.head_camera": "observation.images.camera1", "observation.images.left_wrist_camera": "observation.images.camera2", "observation.images.right_wrist_camera": "observation.images.camera3"}' \
+  --policy.path=lerobot/smolvla_base \
+  --policy.push_to_hub=false \
+  --policy.optimizer_lr=1e-5 --policy.scheduler_warmup_steps=500 \
+  --batch_size=8 --num_workers=4 --steps=20000 \
+  --save_freq=5000 --log_freq=100 --eval_freq=0 \
+  --output_dir=checkpoints/yam-grey-cube-smolvla-v0 --job_name=yam-grey-cube-smolvla-v0
+```
+
+## Evaluation
+
+### Replay MSE (offline, no robot needed)
+
+```bash
+uv run python scripts/eval_replay.py \
+    --policy.path=checkpoints/yam-grey-cube-fm-v1/checkpoints/050000/pretrained_model \
+    --dataset.repo_id=ttotmoon/yam_pick_up_grey_cube \
+    --eval_episodes 8 9
+
+# For X-VLA/SmolVLA, add the camera rename map:
+uv run python scripts/eval_replay.py \
+    --policy.path=checkpoints/yam-grey-cube-xvla-v0/checkpoints/020000/pretrained_model \
+    --dataset.repo_id=ttotmoon/yam_pick_up_grey_cube \
+    --eval_episodes 8 9 \
+    --rename_map='{"observation.images.head_camera": "observation.images.image", ...}'
+```
+
+### Serving test (verify action shape)
+
+```bash
+uv run python scripts/test_serve_all.py
+```
+
+See [`serving.md`](./serving.md) for deployment and speed optimization.
+
+## Notes
+
+- **`--policy.use_group_norm=false`** is required for DP/FM when using
+  pretrained ImageNet weights (GroupNorm conversion corrupts BN stats).
+- **`--policy.optimizer_*`** not `--optimizer.*` — lerobot's
+  `TrainPipelineConfig.validate()` silently overwrites top-level optimizer
+  flags with policy presets.
+- **Image dataset is ~20× faster** than video for training. Always convert
+  before launching.

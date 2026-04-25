@@ -76,3 +76,55 @@ MUJOCO_GL=egl lobe-eval \
 ```
 
 In our setup, the official checkpoint scores 41–62.8% (vs. paper's 87.3%) — a known reproduction gap reported by many community members.
+
+---
+
+## YAM (real robot, no sim)
+
+YAM has no simulator. Evaluation uses replay-based MSE on held-out episodes.
+
+### Replay MSE
+
+```bash
+# DP / FM (camera names match dataset directly):
+uv run python scripts/eval_replay.py \
+    --policy.path=checkpoints/yam-grey-cube-fm-v1/checkpoints/050000/pretrained_model \
+    --dataset.repo_id=ttotmoon/yam_pick_up_grey_cube \
+    --eval_episodes 8 9
+
+# X-VLA (needs camera rename):
+uv run python scripts/eval_replay.py \
+    --policy.path=checkpoints/yam-grey-cube-xvla-v0/checkpoints/020000/pretrained_model \
+    --dataset.repo_id=ttotmoon/yam_pick_up_grey_cube \
+    --eval_episodes 8 9 \
+    --rename_map='{"observation.images.head_camera": "observation.images.image", "observation.images.left_wrist_camera": "observation.images.image2", "observation.images.right_wrist_camera": "observation.images.image3"}'
+
+# SmolVLA (camera1/2/3):
+uv run python scripts/eval_replay.py \
+    --policy.path=checkpoints/yam-grey-cube-smolvla-v0/checkpoints/020000/pretrained_model \
+    --dataset.repo_id=ttotmoon/yam_pick_up_grey_cube \
+    --eval_episodes 8 9 \
+    --rename_map='{"observation.images.head_camera": "observation.images.camera1", "observation.images.left_wrist_camera": "observation.images.camera2", "observation.images.right_wrist_camera": "observation.images.camera3"}'
+```
+
+The script bulk-decodes episode videos (O(n)), runs `policy.select_action`
+frame-by-frame, and compares predicted actions to ground-truth. Reports
+per-joint MSE, L∞, and aggregate. Takes ~7 min for 2 episodes.
+
+### Serving test
+
+Verifies end-to-end: starts `lobe-serve` with each checkpoint, connects a
+WebSocket client, sends synthetic observations, confirms action shape is
+`(horizon, 14)`.
+
+```bash
+uv run python scripts/test_serve_all.py
+```
+
+### Inference benchmark
+
+Raw forward-pass latency (no deployment patterns). Proper CUDA sync + warmup.
+
+```bash
+uv run python scripts/bench_inference.py --both     # compiled vs uncompiled
+```

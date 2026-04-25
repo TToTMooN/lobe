@@ -83,11 +83,30 @@ lobe-serve [OPTIONS]
 | `--host <host>` | `0.0.0.0` | Bind address |
 | `--port <port>` | `8000` | Bind port |
 | `--device <device>` | `cuda` | torch device |
+| `--num-inference-steps N` | (from ckpt) | Override denoising/ODE steps for faster inference |
+| `--noise-scheduler-type TYPE` | (from ckpt) | e.g. `DDIM` for DP (default DDPM is 100 steps = 450ms) |
+| `--compile` | off | Enable torch.compile (~1.3-10× speedup, adds warmup) |
+| `--chunk-mode` / `--no-chunk-mode` | on | Return full action chunk vs single action |
+| `--rtc` | off | Enable Real-Time Chunking (VLAs only) |
 
 Example:
 
 ```bash
-lobe-serve --checkpoint=/mnt/localssd/$USER/checkpoints/.../pretrained_model --port 8000
+# Fast DP serving (DDIM-10 + compile):
+lobe-serve --checkpoint=checkpoints/.../pretrained_model --noise-scheduler-type=DDIM --num-inference-steps=10 --compile
+
+# Fast FM serving (5-step + compile):
+lobe-serve --checkpoint=checkpoints/.../pretrained_model --num-inference-steps=5 --compile
 ```
 
-See [Serving workflow](../workflows/serving.md) for the protocol and a test client.
+See [Serving workflow](../workflows/serving.md) for the protocol, test client, and benchmarks.
+
+## Utility scripts
+
+| Script | Purpose |
+|---|---|
+| `scripts/validate_yam_dataset.py` | Validate limb-exported YAM dataset (schema, stats, video alignment) |
+| `scripts/convert_yam_video_to_image.py` | Convert video→image format for 20× faster training |
+| `scripts/eval_replay.py` | Replay-based MSE eval on held-out episodes (no sim needed) |
+| `scripts/test_serve_all.py` | End-to-end serving test (start server → send obs → verify action shape) |
+| `scripts/bench_inference.py` | Raw forward-pass latency benchmark (compiled vs uncompiled) |

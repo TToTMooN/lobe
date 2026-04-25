@@ -64,6 +64,7 @@ MUJOCO_GL=osmesa lerobot-eval \
 |---------|---------|--------|----------|---------|------------|-------|
 | PushT | `lerobot/pusht` | 25k | — | 1 | 96×96 | 2D top-down |
 | LIBERO | `HuggingFaceVLA/libero` | 273k | 1,693 | 2 | 256×256 | Image format (PNG in parquet) |
+| YAM grey cube | `ttotmoon/yam_pick_up_grey_cube` | 10,958 | 10 | 3 | 480×640 | Video (HEVC). Convert to image format for 20× faster training. |
 
 **Data loading optimization**: We patched `lerobot_dataset.py:_query_hf_dataset` to bypass `set_transform` for non-image columns. Without this, querying 50-step action chunks decodes 100 throwaway PNG images per sample (12× slower).
 
@@ -104,6 +105,19 @@ MUJOCO_GL=osmesa lerobot-eval \
 | SmolVLA (ours) | 51% | n_action_steps=1 |
 | SmolVLA (ours, scaled) | 54% | n_action_steps=10, batch=256, LR=4e-4 |
 | SmolVLA (official HF) | 41-44% | Known community reproduction gap |
+
+### YAM grey_cube (14-D bimanual, replay MSE on held-out episodes 8-9)
+
+| Model | Params | Learnable | Replay MSE | Inference (ms) | Train Time | Notes |
+|-------|--------|-----------|------------|----------------|------------|-------|
+| **FM** (5-step Euler) | 275M | 275M | **0.00155** | **18** (compiled) | 2.6h (7×H100) | Best MSE + fastest inference |
+| **X-VLA** (10-step flow) | 879M | 879M | 0.00247 | 78 | 2.0h (3×H100) | Best per-joint arm accuracy |
+| **DP** (DDIM-10) | 271M | 271M | 0.01068 | 35 (compiled) | 2h (8×H100) | Gripper prediction is the gap |
+| **SmolVLA** (10-step flow) | 450M | 100M | 0.02785 | **24** (compiled, 10× speedup) | 1.0h (4×H100) | Frozen encoder; gripper MSE ~0.18 |
+
+Eval protocol: feed each held-out frame's observations to the policy, compare predicted action to ground-truth. Report per-joint MSE and L∞. See `scripts/eval_replay.py`.
+
+Inference measured with `scripts/bench_inference.py` — raw forward-pass time, no chunking amortization. H100, batch=1, CUDA-synced, median of 20 runs after warmup.
 
 ### PushT
 
