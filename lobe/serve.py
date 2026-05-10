@@ -60,6 +60,7 @@ class ServeConfig:
     num_inference_steps: int | None = None  # e.g. 10 for DDIM-10 (DP) or 3-5 for FM. None=use checkpoint default.
     noise_scheduler_type: str | None = None  # e.g. "DDIM" for DP (default DDPM is 100 steps = 450ms)
     compile: bool = False  # Enable torch.compile for ~2× inference speedup (adds warmup latency on first call)
+    compile_mode: str = "default"  # "default" (safe), "reduce-overhead" (CUDA graphs, fast but can produce wrong outputs for ODE-loop policies like FM/SmolVLA), "max-autotune" (slowest warmup, fastest steady-state)
 
     # Gripper binarization — threshold continuous gripper predictions to {0, max}
     gripper_binarize: bool = False  # Enable for YAM bimanual (gripper actions are bimodal 0/2.4)
@@ -340,14 +341,18 @@ class PolicyServer:
                 return connection.respond(http.HTTPStatus.OK, "OK\n")
             return None
 
+        # Bounded message ceiling sized for the largest plausible obs payload:
+        #   3 cameras × 1920×1080 RGB uint8 ≈ 18 MB (1080p native, the most common
+        #   high-res case). 32 MB headroom covers ZED dual-stream and depth+RGB
+        #   stacks. Below this is silently dropped; above it crashes the connection
+        #   instead of letting an attacker buffer arbitrary bytes (default of None
+        #   would). The 1 MB websockets default is too low for raw camera frames:
+        #   even 480×640 RGB × 3 cams ≈ 2.7 MB exceeds it.
+        max_msg_bytes = 32 * 1024 * 1024
         async with websockets.serve(
             self.handle_client, self.config.host, self.config.port,
             process_request=_health_check,
-            # Default is 1 MB, which silently rejects raw camera frames:
-            # native 480x640 uint8 × 3 cameras ≈ 2.7 MB; same-size float32 also exceeds 1 MB.
-            # Setting None matches OpenPI's WebsocketPolicyServer. Clients still resize
-            # to the policy's expected image_size when they want to save bandwidth.
-            max_size=None,
+            max_size=max_msg_bytes,
         ):
             logger.info("Server ready. Waiting for connections (/healthz available).")
             await asyncio.Future()  # run forever
@@ -391,8 +396,29 @@ def main():
         policy_cfg.noise_scheduler_type = config.noise_scheduler_type
         logger.info(f"Override noise_scheduler_type={config.noise_scheduler_type}")
     if config.compile and hasattr(policy_cfg, "compile_model"):
+        # Known correctness regression on torch>=2.10 nightly + flow_matching ODE loop:
+        # the compiled unet silently produces near-random outputs (predictions never
+        # converge and don't match ground-truth even after 40 warmup queries). DP uses
+        # the same unet1d backbone and is likely affected too. Verified on torch
+        # 2.12.0.dev20260306+cu128 against ttotmoon/yam-place-vial-fm-v0:
+        #   no compile        → abs_max_err=0.026 vs ground-truth action
+        #   --compile         → abs_max_err=1.92  (~75× worse, robot shakes wildly)
+        # Until upstream fixes it, --compile is opt-in with a loud warning. Skip the
+        # flag for FM/DP — inference is ~10ms slower per call but predictions are
+        # actually correct.
+        if policy_cfg.type in ("flow_matching", "diffusion"):
+            logger.warning(
+                "═" * 78
+                + f"\n⚠️  --compile + policy_type={policy_cfg.type!r} is BROKEN on the current PyTorch.\n"
+                + "    The compiled unet silently produces near-random outputs.\n"
+                + "    Drop --compile for now (the speedup isn't worth wrong actions).\n"
+                + "    Continuing because you asked for it; expect the robot to shake.\n"
+                + "═" * 78
+            )
         policy_cfg.compile_model = True
-        logger.info("Enabled torch.compile for inference")
+        if hasattr(policy_cfg, "compile_mode"):
+            policy_cfg.compile_mode = config.compile_mode
+        logger.info(f"Enabled torch.compile for inference (mode={config.compile_mode})")
 
     policy_cls = get_policy_class(policy_cfg.type)
     policy = policy_cls.from_pretrained(config.checkpoint, config=policy_cfg)

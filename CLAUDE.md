@@ -78,6 +78,7 @@ See `.claude/projects/-home-lingfeng-playground-lobe/memory/MEMORY.md` for detai
 #### Key findings
 - **Image-format dataset is critical**: video decode bottleneck made DP take 43h; image format brings all runs to 1-3h. Use `scripts/convert_yam_video_to_image.py`.
 - **torch.compile**: 10× on SmolVLA, 1.35× on DP, 1.28× on FM. No effect on X-VLA (Florence-2 ops not compile-friendly).
+  ⚠️ **CURRENTLY BROKEN for FM/DP** on the pinned PyTorch nightly (2.12.0.dev20260306+cu128, required for RTX 5090 sm_120). The compiled unet silently produces near-random outputs and the policy looks completely broken at inference. Reproduce: `lobe-serve --checkpoint=ttotmoon/yam-place-vial-fm-v0 --compile` → abs_max_err vs ground-truth action ≈ 1.9 (vs 0.03 without --compile). **Do NOT pass `--compile` for FM/DP serving until upstream PyTorch fixes the regression.** SmolVLA + X-VLA serving is unaffected; X-VLA didn't compile in the first place.
 - **FM wins** on both accuracy (MSE) and speed (18ms compiled). Best choice for real-time YAM deployment.
 
 ### Current Status
