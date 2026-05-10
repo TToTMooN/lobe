@@ -27,19 +27,25 @@ PRESET_ALIASES = {
     "fm": "yam_grey_cube_flow_matching",
     "xvla": "yam_grey_cube_xvla",
     "smolvla": "yam_grey_cube_smolvla",
+    "dp-vial": "yam_place_vial_diffusion",
+    "fm-vial": "yam_place_vial_flow_matching",
+    "xvla-vial": "yam_place_vial_xvla",
 }
 
+_XVLA_RENAME = (
+    '{"observation.images.head_camera": "observation.images.image",'
+    ' "observation.images.left_wrist_camera": "observation.images.image2",'
+    ' "observation.images.right_wrist_camera": "observation.images.image3"}'
+)
+_SMOLVLA_RENAME = (
+    '{"observation.images.head_camera": "observation.images.camera1",'
+    ' "observation.images.left_wrist_camera": "observation.images.camera2",'
+    ' "observation.images.right_wrist_camera": "observation.images.camera3"}'
+)
 RENAME_MAPS = {
-    "yam_grey_cube_xvla": (
-        '{"observation.images.head_camera": "observation.images.image",'
-        ' "observation.images.left_wrist_camera": "observation.images.image2",'
-        ' "observation.images.right_wrist_camera": "observation.images.image3"}'
-    ),
-    "yam_grey_cube_smolvla": (
-        '{"observation.images.head_camera": "observation.images.camera1",'
-        ' "observation.images.left_wrist_camera": "observation.images.camera2",'
-        ' "observation.images.right_wrist_camera": "observation.images.camera3"}'
-    ),
+    "yam_grey_cube_xvla": _XVLA_RENAME,
+    "yam_grey_cube_smolvla": _SMOLVLA_RENAME,
+    "yam_place_vial_xvla": _XVLA_RENAME,
 }
 
 

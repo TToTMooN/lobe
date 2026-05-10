@@ -103,7 +103,11 @@ async def test_client(port: int, backbone: str, timeout_s: float = 120.0) -> dic
     return {"backbone": backbone, "pass": False, "error": "timeout waiting for server"}
 
 
-def test_one_checkpoint(backbone: str, checkpoint: str, port: int, gpu: int) -> dict:
+def test_one_checkpoint(
+    backbone: str, checkpoint: str, port: int, gpu: int,
+    gripper_binarize: bool = True, gripper_dims: tuple[int, ...] = (6, 13),
+    compile_model: bool = True,
+) -> dict:
     """Start server, run client test, kill server."""
     if not os.path.exists(checkpoint):
         logger.warning(f"[{backbone}] checkpoint not found: {checkpoint}")
@@ -119,6 +123,13 @@ def test_one_checkpoint(backbone: str, checkpoint: str, port: int, gpu: int) -> 
         extra_args += ["--noise-scheduler-type=DDIM", "--num-inference-steps=10"]
     elif backbone in ("fm",):
         extra_args += ["--num-inference-steps=5"]
+
+    if gripper_binarize and gripper_dims:
+        extra_args.append("--gripper-binarize")
+        extra_args.append("--gripper-dims")
+        extra_args.extend(str(d) for d in gripper_dims)
+    if compile_model:
+        extra_args.append("--compile")
 
     server_proc = subprocess.Popen(
         [
@@ -159,6 +170,12 @@ def main():
     )
     parser.add_argument("--gpu", type=int, default=7, help="GPU to use for serving")
     parser.add_argument("--base-port", type=int, default=9100)
+    parser.add_argument("--no-gripper-binarize", action="store_true",
+                        help="Disable gripper binarization (default: on for YAM)")
+    parser.add_argument("--gripper-dims", type=int, nargs="+", default=[6, 13],
+                        help="Action dims to binarize (default: 6 13 for YAM bimanual)")
+    parser.add_argument("--no-compile", action="store_true",
+                        help="Disable torch.compile for inference (default: on)")
     args = parser.parse_args()
 
     checkpoints = dict(DEFAULT_CHECKPOINTS)
@@ -171,7 +188,12 @@ def main():
     results = []
     for i, (backbone, ckpt) in enumerate(checkpoints.items()):
         port = args.base_port + i
-        r = test_one_checkpoint(backbone, ckpt, port, args.gpu)
+        r = test_one_checkpoint(
+            backbone, ckpt, port, args.gpu,
+            gripper_binarize=not args.no_gripper_binarize,
+            gripper_dims=tuple(args.gripper_dims),
+            compile_model=not args.no_compile,
+        )
         results.append(r)
         status = "PASS" if r.get("pass") else "FAIL"
         logger.info(f"[{backbone}] {status} — shape={r.get('action_shape')} infer={r.get('infer_ms')}ms")
