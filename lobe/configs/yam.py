@@ -37,6 +37,10 @@ class YAMBaseConfig:
     save_freq: int = 10_000
     log_freq: int = 100
     eval_freq: int = 0  # no in-training sim eval — YAM eval is replay/on-robot
+    push_to_hub: bool = False
+    hub_repo_id: str | None = None  # e.g. "ttotmoon/yam-place-vial-fm-v0"
+    wandb_enable: bool = True
+    wandb_project: str = "lobe-yam"
 
     def base_args(self) -> list[str]:
         args = [
@@ -49,9 +53,17 @@ class YAMBaseConfig:
             f"--eval_freq={self.eval_freq}",
             f"--output_dir={self.output_dir}",
             f"--job_name={self.job_name}",
+            f"--wandb.enable={str(self.wandb_enable).lower()}",
+            f"--wandb.project={self.wandb_project}",
         ]
         if self.dataset_root is not None:
             args.append(f"--dataset.root={self.dataset_root}")
+        return args
+
+    def hub_args(self) -> list[str]:
+        args = [f"--policy.push_to_hub={str(self.push_to_hub).lower()}"]
+        if self.push_to_hub and self.hub_repo_id:
+            args.append(f"--policy.repo_id={self.hub_repo_id}")
         return args
 
 
@@ -97,7 +109,7 @@ class YAMDiffusionConfig(YAMBaseConfig):
             f"--policy.optimizer_lr={self.optimizer_lr}",
             f"--policy.optimizer_weight_decay={self.optimizer_weight_decay}",
             f"--policy.scheduler_warmup_steps={self.scheduler_warmup_steps}",
-            "--policy.push_to_hub=false",
+            *self.hub_args(),
         ]
 
 
@@ -142,7 +154,7 @@ class YAMFlowMatchingConfig(YAMBaseConfig):
             f"--policy.optimizer_lr={self.optimizer_lr}",
             f"--policy.optimizer_weight_decay={self.optimizer_weight_decay}",
             f"--policy.scheduler_warmup_steps={self.scheduler_warmup_steps}",
-            "--policy.push_to_hub=false",
+            *self.hub_args(),
         ]
 
 
@@ -178,7 +190,7 @@ class YAMXVLAConfig(YAMBaseConfig):
             f"--policy.n_action_steps={self.n_action_steps}",
             "--policy.dtype=bfloat16",
             "--policy.use_amp=false",
-            "--policy.push_to_hub=false",
+            *self.hub_args(),
             f"--policy.optimizer_lr={self.optimizer_lr}",
             f"--policy.optimizer_weight_decay={self.optimizer_weight_decay}",
             f"--policy.optimizer_grad_clip_norm={self.grad_clip_norm}",
@@ -209,7 +221,7 @@ class YAMSmolVLAConfig(YAMBaseConfig):
             *self.base_args(),
             "--dataset.image_transforms.enable=true",
             f"--policy.path={self.policy_path}",
-            "--policy.push_to_hub=false",
+            *self.hub_args(),
             f"--policy.optimizer_lr={self.optimizer_lr}",
             f"--policy.scheduler_warmup_steps={self.scheduler_warmup_steps}",
             # SmolVLA defaults: train_expert_only=True, freeze_vision_encoder=True
@@ -217,9 +229,46 @@ class YAMSmolVLAConfig(YAMBaseConfig):
         ]
 
 
+_PLACE_VIAL_REPO = "local/place_the_vial_into_the_stand_1to4_image"
+_PLACE_VIAL_ROOT = (
+    "/home/sunlingfeng/.cache/huggingface/lerobot/local/place_the_vial_into_the_stand_1to4_image"
+)
+# Checkpoints land on local SSD (root disk is too small for ~16 GB × 3 backbones).
+_PLACE_VIAL_CKPT_BASE = "/mnt/localssd/sunlingfeng/checkpoints"
+
+
 PRESETS: dict[str, YAMBaseConfig] = {
     "yam_grey_cube_diffusion": YAMDiffusionConfig(),
     "yam_grey_cube_flow_matching": YAMFlowMatchingConfig(),
     "yam_grey_cube_xvla": YAMXVLAConfig(),
     "yam_grey_cube_smolvla": YAMSmolVLAConfig(),
+    "yam_place_vial_diffusion": YAMDiffusionConfig(
+        dataset_repo_id=_PLACE_VIAL_REPO,
+        dataset_root=_PLACE_VIAL_ROOT,
+        output_dir=f"{_PLACE_VIAL_CKPT_BASE}/yam-place-vial-dp-v0",
+        job_name="yam-place-vial-dp-v0",
+        push_to_hub=True,
+        hub_repo_id="ttotmoon/yam-place-vial-dp-v0",
+    ),
+    "yam_place_vial_flow_matching": YAMFlowMatchingConfig(
+        dataset_repo_id=_PLACE_VIAL_REPO,
+        dataset_root=_PLACE_VIAL_ROOT,
+        output_dir=f"{_PLACE_VIAL_CKPT_BASE}/yam-place-vial-fm-v0",
+        job_name="yam-place-vial-fm-v0",
+        push_to_hub=True,
+        hub_repo_id="ttotmoon/yam-place-vial-fm-v0",
+    ),
+    "yam_place_vial_xvla": YAMXVLAConfig(
+        dataset_repo_id=_PLACE_VIAL_REPO,
+        dataset_root=_PLACE_VIAL_ROOT,
+        output_dir=f"{_PLACE_VIAL_CKPT_BASE}/yam-place-vial-xvla-v0",
+        job_name="yam-place-vial-xvla-v0",
+        push_to_hub=True,
+        hub_repo_id="ttotmoon/yam-place-vial-xvla-v0",
+        # Longer than the 20k grey-cube preset: dataset is ~18× larger (540K frames vs 30K).
+        # save_freq=10k keeps disk usage in check; we can pick best of 5 checkpoints later.
+        steps=50_000,
+        save_freq=10_000,
+        scheduler_decay_steps=50_000,  # decay_lr==peak means constant LR; match step total for clarity
+    ),
 }

@@ -10,3 +10,7 @@ outputs/
 checkpoints/
 wandb/
 datasets/
+logs/
+
+# Claude Code internal
+.claude/scheduled_tasks.lock
