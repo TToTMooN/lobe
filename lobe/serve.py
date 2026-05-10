@@ -214,8 +214,22 @@ class PolicyServer:
                     batch = dict(batch)
                     obs_images_key = "observation.images"
                     img_keys = list(self.policy.config.image_features.keys())
-                    if img_keys and img_keys[0] in batch:
-                        batch[obs_images_key] = torch.stack([batch[k] for k in img_keys], dim=-4)
+                    # Catch missing-camera errors with a clear message instead of letting
+                    # the model crash deep in einops/rearrange. This is the kind of
+                    # mismatch that causes "robot shaking" symptoms — a missing camera
+                    # makes the server reject the obs, the client reconnects, the queue
+                    # resets, and the policy outputs near-mean predictions on its first
+                    # 1-2 ticks before stabilizing.
+                    missing = [k for k in img_keys if k not in batch]
+                    if missing:
+                        raise ValueError(
+                            f"Observation is missing image keys {missing}. "
+                            f"Policy expects: {img_keys}. "
+                            f"Got top-level batch keys: {sorted(batch.keys())}. "
+                            f"Check that the client is sending all expected cameras "
+                            f"(see metadata['expected_images'])."
+                        )
+                    batch[obs_images_key] = torch.stack([batch[k] for k in img_keys], dim=-4)
                 self.policy._queues = populate_queues(self.policy._queues, batch)
 
             kwargs = {}
@@ -329,6 +343,11 @@ class PolicyServer:
         async with websockets.serve(
             self.handle_client, self.config.host, self.config.port,
             process_request=_health_check,
+            # Default is 1 MB, which silently rejects raw camera frames:
+            # native 480x640 uint8 × 3 cameras ≈ 2.7 MB; same-size float32 also exceeds 1 MB.
+            # Setting None matches OpenPI's WebsocketPolicyServer. Clients still resize
+            # to the policy's expected image_size when they want to save bandwidth.
+            max_size=None,
         ):
             logger.info("Server ready. Waiting for connections (/healthz available).")
             await asyncio.Future()  # run forever
