@@ -13,11 +13,11 @@ lobe-serve \
 The server prints metadata on startup:
 
 ```
-Loaded policy: smolvla | 450,046,176 params
+Loaded policy: flow_matching | 274,844,078 params
 Starting policy server on ws://0.0.0.0:8000
-Metadata: {'model_name': 'lobe-smolvla', 'policy_type': 'smolvla',
-           'action_horizon': 50, 'action_dim': 7,
-           'image_keys': ['observation.images.camera1', ...]}
+Metadata: {'model_name': 'lobe-flow_matching', 'policy_type': 'flow_matching',
+           'action_horizon': 8, 'action_dim': 14,
+           'image_keys': ['observation.images.head_camera', ...]}
 ```
 
 ## Protocol

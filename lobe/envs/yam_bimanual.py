@@ -10,33 +10,29 @@ from __future__ import annotations
 from lobe.data.loading import load_lerobot_dataset
 
 # YAM bimanual constants (matches ALOHA action space)
-FPS = 50.0  # limb control frequency
+FPS = 30.0  # limb data collection frequency
 N_OBS_STEPS = 1  # VLAs typically use 1 obs step
 HORIZON = 16  # action prediction horizon (for FM/Diffusion)
 N_ACTION_STEPS = 8
 ACTION_DIM = 14  # 6 joints + 1 gripper per arm x 2
 STATE_DIM = 14
-NUM_CAMERAS = 2  # left_wrist_camera, right_wrist_camera
+NUM_CAMERAS = 3  # head_camera, left_wrist_camera, right_wrist_camera
 IMAGE_SHAPE = (480, 640, 3)  # raw capture from RealSense
-MODEL_IMAGE_SHAPE = (224, 224, 3)  # resized for model input
+MODEL_IMAGE_SHAPE = (240, 320, 3)  # resized for training (half resolution)
 
 # VLA action chunk settings (pi0/smolvla convention)
 VLA_CHUNK_SIZE = 50
 VLA_N_ACTION_STEPS = 50
 
 # Camera names (from limb's data collection)
-CAMERA_NAMES = ["left_wrist_camera", "right_wrist_camera"]
+CAMERA_NAMES = ["head_camera", "left_wrist_camera", "right_wrist_camera"]
 
 # Default dataset (placeholder — user provides their own)
 DEFAULT_DATASET = ""
 
 
 def delta_timestamps(fps: float = FPS, n_obs_steps: int = N_OBS_STEPS, horizon: int = HORIZON):
-    """Generate observation/action timestamps for YAM data.
-
-    Adapts to different fps and horizon settings. Camera names are
-    auto-detected from the dataset, but we provide common defaults.
-    """
+    """Generate observation/action timestamps for YAM data."""
     obs_ts = [i / fps for i in range(1 - n_obs_steps, 1)]
     act_ts = [i / fps for i in range(1 - n_obs_steps, 1 - n_obs_steps + horizon)]
 
@@ -44,7 +40,6 @@ def delta_timestamps(fps: float = FPS, n_obs_steps: int = N_OBS_STEPS, horizon: 
         "observation.state": obs_ts,
         "action": act_ts,
     }
-    # Add camera timestamps — names may vary per dataset
     for cam in CAMERA_NAMES:
         timestamps[f"observation.images.{cam}"] = obs_ts
 

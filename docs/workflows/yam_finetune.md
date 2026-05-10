@@ -117,9 +117,17 @@ names must be remapped to X-VLA's expected `image/image2/image3`.
   --output_dir=checkpoints/yam-grey-cube-xvla-v0 --job_name=yam-grey-cube-xvla-v0
 ```
 
-The `xvla-pt-yam14` checkpoint is a copy of `xvla-pt-v8` with
-`output_features.action.shape=[14]`. See
-[`xvla_finetune.md`](./xvla_finetune.md) for the V14 recipe details.
+The `xvla-pt-yam14` checkpoint is a copy of `2toINF/X-VLA-Pt` with
+`output_features.action.shape=[14]` in `config.json`. To create it:
+```bash
+# Download and patch for 14-D action
+huggingface-cli download 2toINF/X-VLA-Pt --local-dir xvla-pt-yam14
+python -c "
+import json; p='xvla-pt-yam14/config.json'; c=json.load(open(p))
+c['output_features']['action']['shape']=[14]; json.dump(c,open(p,'w'),indent=4)
+"
+```
+See [`xvla_finetune.md`](./xvla_finetune.md) for the V14 recipe details.
 
 ## SmolVLA
 
@@ -152,12 +160,19 @@ uv run python scripts/eval_replay.py \
     --dataset.repo_id=ttotmoon/yam_pick_up_grey_cube \
     --eval_episodes 8 9
 
-# For X-VLA/SmolVLA, add the camera rename map:
+# X-VLA (rename cameras to image/image2/image3):
 uv run python scripts/eval_replay.py \
     --policy.path=checkpoints/yam-grey-cube-xvla-v0/checkpoints/020000/pretrained_model \
     --dataset.repo_id=ttotmoon/yam_pick_up_grey_cube \
     --eval_episodes 8 9 \
-    --rename_map='{"observation.images.head_camera": "observation.images.image", ...}'
+    --rename_map='{"observation.images.head_camera": "observation.images.image", "observation.images.left_wrist_camera": "observation.images.image2", "observation.images.right_wrist_camera": "observation.images.image3"}'
+
+# SmolVLA (rename cameras to camera1/camera2/camera3):
+uv run python scripts/eval_replay.py \
+    --policy.path=checkpoints/yam-grey-cube-smolvla-v0/checkpoints/020000/pretrained_model \
+    --dataset.repo_id=ttotmoon/yam_pick_up_grey_cube \
+    --eval_episodes 8 9 \
+    --rename_map='{"observation.images.head_camera": "observation.images.camera1", "observation.images.left_wrist_camera": "observation.images.camera2", "observation.images.right_wrist_camera": "observation.images.camera3"}'
 ```
 
 ### Serving test (verify action shape)
@@ -167,6 +182,37 @@ uv run python scripts/test_serve_all.py
 ```
 
 See [`serving.md`](./serving.md) for deployment and speed optimization.
+
+## Deployment recommendation
+
+| Scenario | Backbone | Why |
+|----------|----------|-----|
+| **Real-time control (≥30 Hz)** | **FM** (compiled, 5-step) | 18 ms inference, lowest MSE |
+| **Best arm accuracy** | **X-VLA** | 0.00247 MSE, 78 ms (fits 10 Hz with 30-action chunks) |
+| **Fastest training** | **SmolVLA** | 1h to train, 24 ms compiled inference |
+| **No pretrained weights available** | **DP** or **FM** | Train from scratch with ImageNet encoder |
+
+Serve with speed flags for production:
+```bash
+# Recommended: FM with compile
+lobe-serve --checkpoint=checkpoints/yam-grey-cube-fm-v1/checkpoints/050000/pretrained_model \
+    --num-inference-steps=5 --compile
+
+# X-VLA (higher accuracy, slower)
+lobe-serve --checkpoint=checkpoints/yam-grey-cube-xvla-v0/checkpoints/020000/pretrained_model \
+    --compile
+```
+
+## Using a different YAM dataset
+
+To train on a new limb-collected task (e.g. `ttotmoon/yam_pour_water`):
+
+1. **Validate**: `uv run python scripts/validate_yam_dataset.py ttotmoon/yam_pour_water --create-tag --rebuild-stats`
+2. **Convert**: `uv run python scripts/convert_yam_video_to_image.py --repo_id ttotmoon/yam_pour_water --output local/yam_pour_water_image --resize 240 320`
+3. **Train**: Change `--dataset.repo_id` and `--dataset.root` in any launch command above, or edit the preset in `lobe/configs/yam.py` and use `scripts/train_yam.py`.
+4. **Eval**: `uv run python scripts/eval_replay.py --policy.path=<checkpoint> --dataset.repo_id=ttotmoon/yam_pour_water --eval_episodes 8 9`
+
+Everything else (action dim, cameras, state dim) stays the same as long as the new dataset was collected with the same YAM robot via limb.
 
 ## Notes
 
