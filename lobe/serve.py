@@ -13,12 +13,18 @@ Supports two modes:
    inference with flow-matching policies (SmolVLA, pi0, FM). RTC uses leftover actions
    from the previous chunk to guide generation of the next chunk via prefix attention.
 
-Implements limb's WebSocketPolicyClient protocol:
-1. Client connects via ws://host:port
-2. Server sends metadata (msgpack): {model_name, action_horizon, action_dim, ...}
-3. Client sends obs (msgpack): {state: float32, images: {cam: uint8}, prompt: str}
-4. Server responds with action(s) (msgpack): {actions: float32(H, D), timing: {infer_ms}}
-5. Loop 3-4 until disconnect
+Speaks the unified policy-server wire protocol (compatible with both limb's
+WebSocketPolicyClient and openpi_client.WebsocketClientPolicy):
+
+1. Client connects via ws://host:port. `GET /healthz` on the same port returns 200.
+2. Server sends metadata (msgpack): {model_name, action_horizon, action_dim,
+   expected_images, image_layout, image_resize, accepts_prompt, ...}
+3. Client sends obs (msgpack), in EITHER:
+     • limb spec (nested):  {"state": f32[D], "images": {"<cam>": uint8(H,W,3)}, "prompt": str}
+     • OpenPI spec (flat):  {"state": f32[D], "<cam>": uint8(3,H,W), "prompt": str}
+4. Server responds (msgpack):
+     {"actions": f32(H, D), "server_timing": {infer_ms, total_ms}, "timing": <alias>}
+5. Loop 3-4 until disconnect.
 
 Usage:
     lobe-serve --checkpoint=/path/to/pretrained_model
@@ -70,11 +76,16 @@ class ServeConfig:
     rtc_inference_latency: float = 0.0  # Estimated server inference time in seconds (auto-tracked if 0)
 
 
-def _build_obs_batch(obs: dict, device: str) -> dict[str, torch.Tensor]:
+def _build_obs_batch(obs: dict, device: str, image_keys: list[str] | None = None) -> dict[str, torch.Tensor]:
     """Convert client observation dict to policy input batch.
 
-    Expected client format:
-        {"state": [...], "images": {"image": uint8 HWC, "image2": ...}, "prompt": "..."}
+    Accepts both wire formats:
+      • limb spec (nested): {"state": [...], "images": {"<cam>": uint8 HWC}, "prompt": "..."}
+      • OpenPI spec (flat): {"state": [...], "<cam>": uint8 CHW or HWC, "prompt": "..."}
+
+    For the flat case, `image_keys` (the policy's expected camera names) is used
+    to disambiguate which top-level keys are images. Bare camera names from the
+    client (e.g. "cam_high") are accepted; they get the "observation.images." prefix.
     """
     batch: dict[str, torch.Tensor] = {}
 
@@ -82,14 +93,29 @@ def _build_obs_batch(obs: dict, device: str) -> dict[str, torch.Tensor]:
         state = np.asarray(obs["state"], dtype=np.float32)
         batch["observation.state"] = torch.from_numpy(state).unsqueeze(0).to(device)
 
-    if "images" in obs:
+    def _add_image(cam_name: str, img):
+        img = np.asarray(img)
+        # Coerce both layouts to CHW float32 in [0, 1].
+        if img.ndim == 3 and img.shape[-1] == 3 and img.shape[0] != 3:
+            img = img.transpose(2, 0, 1)  # HWC -> CHW
+        if img.dtype != np.float32:
+            img = img.astype(np.float32) / 255.0
+        tensor = torch.from_numpy(img.copy()).unsqueeze(0).to(device)
+        # Strip leading "observation.images." if the client already prefixed it.
+        bare = cam_name.removeprefix("observation.images.")
+        batch[f"observation.images.{bare}"] = tensor
+
+    if "images" in obs and isinstance(obs["images"], dict):
         for cam_name, img in obs["images"].items():
-            img = np.asarray(img, dtype=np.uint8)
-            if img.ndim == 3 and img.shape[-1] == 3:
-                img = img.transpose(2, 0, 1)  # HWC -> CHW
-            tensor = torch.from_numpy(img.copy()).float().div(255.0).unsqueeze(0).to(device)
-            key = f"observation.images.{cam_name}"
-            batch[key] = tensor
+            _add_image(cam_name, img)
+    elif image_keys:
+        # OpenPI-style flat: walk known image keys at the top level.
+        for cam_key in image_keys:
+            bare = cam_key.removeprefix("observation.images.")
+            for try_key in (cam_key, bare, f"observation.images.{bare}"):
+                if try_key in obs:
+                    _add_image(bare, obs[try_key])
+                    break
 
     if "prompt" in obs:
         batch["task"] = obs["prompt"]
@@ -145,6 +171,11 @@ class PolicyServer:
             "image_keys": self.image_keys,
             "chunk_mode": config.chunk_mode,
             "rtc_enabled": self.rtc_enabled,
+            # Negotiation hints for clients (matches OpenPI metadata extension proposal).
+            "expected_images": [k.removeprefix("observation.images.") for k in self.image_keys],
+            "image_layout": "hwc",      # client may also send chw; server accepts both
+            "image_resize": "interp",   # bilinear-interp resize was used at training time
+            "accepts_prompt": True,
         }
 
     def _record_latency(self, latency_s: float):
@@ -229,7 +260,7 @@ class PolicyServer:
             async for message in websocket:
                 t0 = time.perf_counter()
                 obs = msgpack.unpackb(message, raw=False, object_hook=msgpack_numpy.decode)
-                batch = _build_obs_batch(obs, self.device)
+                batch = _build_obs_batch(obs, self.device, image_keys=self.image_keys)
 
                 t_infer = time.perf_counter()
                 actions = self._infer_actions(batch)
@@ -252,13 +283,17 @@ class PolicyServer:
                                 col > col_max * self.config.gripper_threshold, col_max, 0.0
                             )
 
+                # `server_timing` is the canonical OpenPI key; `timing` is kept as an
+                # alias so older limb clients reading "timing" don't break.
+                timing_dict = {
+                    "infer_ms": round(infer_s * 1000, 2),
+                    "total_ms": round((time.perf_counter() - t0) * 1000, 2),
+                    "rtc_delay": self._compute_rtc_delay() if self.rtc_enabled else 0,
+                }
                 response = {
                     "actions": actions_np.astype(np.float32),
-                    "timing": {
-                        "infer_ms": round(infer_s * 1000, 2),
-                        "total_ms": round((time.perf_counter() - t0) * 1000, 2),
-                        "rtc_delay": self._compute_rtc_delay() if self.rtc_enabled else 0,
-                    },
+                    "server_timing": timing_dict,
+                    "timing": timing_dict,
                 }
                 await websocket.send(msgpack.packb(response, use_bin_type=True, default=msgpack_numpy.encode))
 
@@ -272,6 +307,8 @@ class PolicyServer:
         logger.info(f"Client disconnected: {client_addr}")
 
     async def run(self):
+        import http
+
         import websockets
 
         logger.info(f"Starting policy server on ws://{self.config.host}:{self.config.port}")
@@ -283,8 +320,17 @@ class PolicyServer:
                 f"latency={self._inference_latency * 1000:.0f}ms"
             )
 
-        async with websockets.serve(self.handle_client, self.config.host, self.config.port):
-            logger.info("Server ready. Waiting for connections...")
+        def _health_check(connection, request):
+            # Shares the websocket port — clients can `curl http://host:port/healthz`.
+            if request.path == "/healthz":
+                return connection.respond(http.HTTPStatus.OK, "OK\n")
+            return None
+
+        async with websockets.serve(
+            self.handle_client, self.config.host, self.config.port,
+            process_request=_health_check,
+        ):
+            logger.info("Server ready. Waiting for connections (/healthz available).")
             await asyncio.Future()  # run forever
 
 
