@@ -60,6 +60,7 @@ class ServeConfig:
     num_inference_steps: int | None = None  # e.g. 10 for DDIM-10 (DP) or 3-5 for FM. None=use checkpoint default.
     noise_scheduler_type: str | None = None  # e.g. "DDIM" for DP (default DDPM is 100 steps = 450ms)
     compile: bool = False  # Enable torch.compile for ~2× inference speedup (adds warmup latency on first call)
+    compile_mode: str = "default"  # "default" (safe), "reduce-overhead" (CUDA graphs, fast but can produce wrong outputs for ODE-loop policies like FM/SmolVLA), "max-autotune" (slowest warmup, fastest steady-state)
 
     # Gripper binarization — threshold continuous gripper predictions to {0, max}
     gripper_binarize: bool = False  # Enable for YAM bimanual (gripper actions are bimodal 0/2.4)
@@ -391,8 +392,29 @@ def main():
         policy_cfg.noise_scheduler_type = config.noise_scheduler_type
         logger.info(f"Override noise_scheduler_type={config.noise_scheduler_type}")
     if config.compile and hasattr(policy_cfg, "compile_model"):
+        # Known correctness regression on torch>=2.10 nightly + flow_matching ODE loop:
+        # the compiled unet silently produces near-random outputs (predictions never
+        # converge and don't match ground-truth even after 40 warmup queries). DP uses
+        # the same unet1d backbone and is likely affected too. Verified on torch
+        # 2.12.0.dev20260306+cu128 against ttotmoon/yam-place-vial-fm-v0:
+        #   no compile        → abs_max_err=0.026 vs ground-truth action
+        #   --compile         → abs_max_err=1.92  (~75× worse, robot shakes wildly)
+        # Until upstream fixes it, --compile is opt-in with a loud warning. Skip the
+        # flag for FM/DP — inference is ~10ms slower per call but predictions are
+        # actually correct.
+        if policy_cfg.type in ("flow_matching", "diffusion"):
+            logger.warning(
+                "═" * 78
+                + f"\n⚠️  --compile + policy_type={policy_cfg.type!r} is BROKEN on the current PyTorch.\n"
+                + "    The compiled unet silently produces near-random outputs.\n"
+                + "    Drop --compile for now (the speedup isn't worth wrong actions).\n"
+                + "    Continuing because you asked for it; expect the robot to shake.\n"
+                + "═" * 78
+            )
         policy_cfg.compile_model = True
-        logger.info("Enabled torch.compile for inference")
+        if hasattr(policy_cfg, "compile_mode"):
+            policy_cfg.compile_mode = config.compile_mode
+        logger.info(f"Enabled torch.compile for inference (mode={config.compile_mode})")
 
     policy_cls = get_policy_class(policy_cfg.type)
     policy = policy_cls.from_pretrained(config.checkpoint, config=policy_cfg)
