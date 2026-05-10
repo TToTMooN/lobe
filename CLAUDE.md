@@ -65,22 +65,41 @@ See `.claude/projects/-home-lingfeng-playground-lobe/memory/MEMORY.md` for detai
 3. **persistent_workers + prefetch_factor=4**: Eliminates worker respawn overhead
 4. **Lesson learned**: Always match published effective batch size, or scale LR proportionally (linear rule)
 
-### Current Plan (in priority order — ALWAYS have something running)
-1. ~~FM on LIBERO~~ ✓ trained (loss=0.177), needs eval implementation
-2. ~~SmolVLA full benchmark~~ ✓ 82.0% across all suites
-3. **Diffusion v2 on LIBERO** — running now (batch=256, 200k steps, ~11h)
-4. **FM eval on LIBERO** — implement sim evaluate() for our FM policy
-5. **Mujoco downgrade + re-eval** — try mujoco==3.3.2 to close SmolVLA eval gap
-6. **More methods** — pi0, XVLA, ACT on LIBERO
+### YAM Benchmark Results (yam_pick_up_grey_cube, v1.1)
+
+#### Replay MSE (held-out episodes 8-9) + Inference Latency (H100)
+| Model | Params | Replay MSE | Infer (compiled) | Train Time | Notes |
+|-------|--------|------------|------------------|------------|-------|
+| **FM v1** | 275M | **0.00155** | **18 ms** | 2.6h (7×H100) | Best MSE + fastest inference. 5-step Euler. |
+| **X-VLA v0** | 879M | 0.00247 | 78 ms | 2.0h (3×H100) | Best per-joint arm accuracy. 10-step flow. |
+| **DP v0** | 271M | 0.01068 | 35 ms | 2h (8×H100) | DDIM-10. Gripper prediction is the gap. |
+| **SmolVLA v0** | 450M (100M learnable) | 0.02785 | 24 ms | 1.0h (4×H100) | 10× from torch.compile (242→24ms). Gripper MSE dominates. |
+
+#### Key findings
+- **Image-format dataset is critical**: video decode bottleneck made DP take 43h; image format brings all runs to 1-3h. Use `scripts/convert_yam_video_to_image.py`.
+- **torch.compile**: 10× on SmolVLA, 1.35× on DP, 1.28× on FM. No effect on X-VLA (Florence-2 ops not compile-friendly).
+- **FM wins** on both accuracy (MSE) and speed (18ms compiled). Best choice for real-time YAM deployment.
+
+### Current Status
+- **v1.1 YAM multi-backbone pipeline**: complete (Phases 0-5). All 4 backbones trained, evaluated, serving-verified.
+- **v1.0 X-VLA LIBERO reproduction**: 91.25% avg (V17b), 6.85 pp from paper.
+- **Next**: on-robot eval, DiT caching for X-VLA inference, new datasets.
+
+### Quick start (YAM training)
+```bash
+uv run python scripts/train_yam.py fm          # Flow Matching (recommended)
+uv run python scripts/train_yam.py xvla        # X-VLA
+uv run python scripts/train_yam.py dp          # Diffusion Policy
+uv run python scripts/train_yam.py smolvla     # SmolVLA
+uv run python scripts/train_yam.py --list      # show all presets
+```
 
 ### Eval notes
-- Use `MUJOCO_GL=osmesa` (EGL broken due to NVIDIA driver version mismatch)
+- Use `MUJOCO_GL=osmesa` for LIBERO (EGL broken due to NVIDIA driver version mismatch)
 - Use `--policy.n_action_steps=10` for SmolVLA (1 gave worse results)
 - Use `--eval.batch_size=1 --eval.n_episodes=10` per task
+- YAM eval: `scripts/eval_replay.py` (replay MSE) + `scripts/test_serve_all.py` (serving)
 - Output dir on SSD: `/mnt/localssd/sunlingfeng/checkpoints/`
-| pi0-FAST | 3B | 82.5% | batch=32, 20k steps |
-| pi0.5 | 3B | 97.5% | batch=32x8GPU, 6k steps |
-| X-VLA | 0.9B | 98.1% | ~30k steps |
 
 ---
 
