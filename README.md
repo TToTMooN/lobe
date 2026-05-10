@@ -9,15 +9,16 @@ limb handles robot control + data collection; LOBE handles policy training + ser
 
 ## Supported Models
 
-| Model | Params | Training Speed | Best For |
-|-------|--------|---------------|----------|
-| **Flow Matching** | 262M | Fast | Drop-in upgrade over Diffusion Policy — 1-step inference |
-| **Diffusion Policy** | 262M | Fast | Strong baseline, well-tested |
-| **X-VLA** | 0.9B | ~2h on 1xA100 | Small datasets, quick iteration |
-| **pi0.5** | 3B | ~8h on 1xA100 | Zero-shot transfer from ALOHA |
-| **WALL-OSS** | ~3B | Medium | MoE, chain-of-thought reasoning |
+| Model | Params | LIBERO 4-suite (ours) | Training Speed | Best For |
+|-------|--------|------------------------|---------------|----------|
+| **X-VLA (v1.0 recipe)** | 0.9B | **85.75%** | 3h40m on 8×H100 | Reproducing/fine-tuning X-VLA on LIBERO and any lerobot single-arm dataset. See `docs/workflows/xvla_finetune.md`. |
+| **SmolVLA** | 450M | 82.0% | 4h on 8×H100 | Known-good VLA baseline |
+| **Flow Matching** | 262M | needs eval | 2h on 1×H100 | Drop-in upgrade over Diffusion Policy — 1-step inference |
+| **Diffusion Policy** | 262M | — | 50min on 8×H100 | Strong baseline, well-tested |
+| **pi0.5** | 3B | — | ~8h on 1×A100 | Zero-shot transfer from ALOHA |
+| **WALL-OSS** | ~3B | — | Medium | MoE, chain-of-thought reasoning |
 
-All VLA models expect **224x224 RGB** images and **14-dim actions** (2x 6-DOF + gripper), matching YAM bimanual.
+X-VLA is a 20-D dual-arm-canonical VLA that fine-tunes cleanly to any single-arm lerobot dataset via `action_mode=auto`. The v1.0 recipe (85.75% LIBERO avg, 12 pp gap to paper's 98.1%) works on any lerobot v3.0 dataset with 20-D EE6D grip-site state and 10-D `abs_action_6d` single-arm action — LIBERO is just the first proof point.
 
 ## Setup
 

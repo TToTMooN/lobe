@@ -22,19 +22,23 @@ serve = [
     "msgpack",
     "msgpack-numpy",
 ]
-eval = [
-    "gym-pusht",
-    "pymunk<7",
-    "pygame",
-    "opencv-python",
-]
-aloha = [
-    "gym-aloha",
-]
+# eval extras commented out — gym-pusht has conflicts with lerobot nightly torch
+# eval = ["gym-pusht", "pymunk<7", "pygame", "opencv-python"]
+# libero extras: install manually with `uv pip install robosuite==1.4.1 bddl easydict matplotlib gym`
+# (declaring as project deps causes conflict with lerobot nightly torch)
+# libero = ["robosuite==1.4.1", "bddl", "easydict", "matplotlib", "gym"]
+
+[project.scripts]
+lobe-train = "lobe.cli:train"
+lobe-eval = "lobe.cli:eval"
+lobe-serve = "lobe.cli:serve"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lobe", "lerobot_policy_flow_matching", "lerobot_policy_xvla"]
 
 [[tool.uv.index]]
 name = "pytorch-nightly"
@@ -43,14 +47,16 @@ url = "https://download.pytorch.org/whl/nightly/cu128"
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
 # Override lerobot's torch<2.11 constraint to allow PyTorch nightly (cu128 for RTX 5090)
-override-dependencies = ["torch>=2.2"]
+# Override huggingface-hub to allow <1.0 (transformers nightly requires <1.0)
+override-dependencies = ["torch>=2.2", "torchvision>=0.20", "huggingface-hub>=0.34,<2"]
+index-strategy = "unsafe-best-match"
 
 [tool.uv.sources]
 torch = { index = "pytorch-nightly" }
 torchvision = { index = "pytorch-nightly" }
 triton = { index = "pytorch-nightly" }
 torchcodec = { index = "pypi" }
-lerobot = { git = "https://github.com/huggingface/lerobot.git" }
+lerobot = { git = "https://github.com/huggingface/lerobot.git", rev = "017ff73fbfe46bf9a673cd9b402988dcb79151f7" }
 
 [tool.ruff]
 line-length = 119

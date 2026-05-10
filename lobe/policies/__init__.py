@@ -1,12 +1,11 @@
-from lobe.policies.diffusion_wrapper import NormalizedDiffusionPolicy
-from lobe.policies.factory import create_policy, load_checkpoint, split_features
+from lerobot.policies.xvla.configuration_xvla import XVLAConfig
+from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
+
 from lobe.policies.flow_matching import FlowMatchingConfig, FlowMatchingPolicy
 
 __all__ = [
     "FlowMatchingConfig",
     "FlowMatchingPolicy",
-    "NormalizedDiffusionPolicy",
-    "create_policy",
-    "load_checkpoint",
-    "split_features",
+    "XVLAConfig",
+    "XVLAPolicy",
 ]

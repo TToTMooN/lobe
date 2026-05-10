@@ -57,7 +57,9 @@ class FlowMatchingConfig(PreTrainedConfig):
 
     # Vision backbone
     vision_backbone: str = "resnet18"
-    vision_encoder: str = "spatial_softmax"  # spatial_softmax (64-d) | global_pool (512-d, matches VITA)
+    # spatial_softmax (64-d) | global_pool (512-d) | dinov2_small (384-d) | dinov2_base (768-d) | siglip_base (768-d)
+    vision_encoder: str = "spatial_softmax"
+    vision_encoder_frozen: bool = True  # freeze pretrained vision encoder (DINOv2/SigLIP)
     resize_shape: tuple[int, int] | None = None
     crop_ratio: float = 0.8
     crop_shape: tuple[int, int] | None = None
@@ -110,8 +112,13 @@ class FlowMatchingConfig(PreTrainedConfig):
     def __post_init__(self):
         super().__post_init__()
 
-        if not self.vision_backbone.startswith("resnet"):
-            raise ValueError(f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}.")
+        # vision_backbone is only used when vision_encoder is spatial_softmax or global_pool
+        if self.vision_encoder in ("spatial_softmax", "global_pool"):
+            if not self.vision_backbone.startswith("resnet"):
+                raise ValueError(
+                    f"`vision_backbone` must be a ResNet variant when using {self.vision_encoder}. "
+                    f"Got {self.vision_backbone}."
+                )
 
         if self.resize_shape is not None and (len(self.resize_shape) != 2 or any(d <= 0 for d in self.resize_shape)):
             raise ValueError(f"`resize_shape` must be a pair of positive integers. Got {self.resize_shape}.")

@@ -10,6 +10,10 @@
 4. **Shared machine etiquette.** Always `nvidia-smi` before launching. Don't hog GPU when others need it.
 5. **Data loading is always the bottleneck.** Use image-format datasets (not video). Use more workers. For small datasets, pre-cache as .pt tensors.
 6. **Benchmark on tasks where your policy type is KNOWN to work.** Diffusion/FM are proven on PushT, LIBERO, robomimic. Don't waste time debugging a policy on a benchmark where it was never shown to work.
+7. **Log everything to experiments.tsv — even failures.** Every training run, eval, and debug attempt gets a row. This is the audit trail of how we got to the final result. Failed experiments are as valuable as successes — they record what we tried and why it didn't work. Think of it as auto-research: the tsv tells the full story.
+8. **Use existing tools, don't reinvent.** For multi-GPU, use `accelerate`. For VLA training, use `lerobot-train`. Search other codebases first. Only build custom when you're certain it's cleaner.
+9. **Maximize GPU utilization.** Use all available GPUs for a single training run (distributed), not one GPU per experiment. `accelerate launch --num_processes=N` for lerobot-based training.
+10. **NEVER STOP.** Always have a training run, eval, or experiment running. When one finishes, immediately start the next item on the plan. Commit progress, log results, update the plan, and launch the next experiment. Idle GPUs are wasted money. If blocked on one task, start another in parallel.
 
 ## Key References
 
@@ -23,30 +27,79 @@
 
 See `.claude/projects/-home-lingfeng-playground-lobe/memory/MEMORY.md` for detailed agent memory (project state, lessons learned, user preferences).
 
-### Verified results
-- FM on PushT: 40% (transformer, 10k steps), 60% (unet, 10k steps) — both backbones work
-- FM on PushT: needs full 50k run for final numbers
+### LIBERO Benchmark Results
 
-### In progress / next
-1. **SmolVLA on LIBERO** — reproduce 87.3% published result
-   - Dataset: `HuggingFaceVLA/libero` (273k examples, 22.4k episodes, 2 cameras)
-   - Config: batch=64, 100k steps, `lerobot/smolvla_base` pretrained
-   - Camera remap: image→camera1, image2→camera2, 1 empty
-   - Command: `uv run python scripts/train_vla.py --model smolvla --dataset HuggingFaceVLA/libero --steps 100000 --batch-size 64`
-2. **FM on LIBERO** — test if our FM policy works on real manipulation
-   - Command: `uv run python scripts/train.py libero-fm --performance.no-compile`
-   - Diffusion Policy baseline: 72.4% on LIBERO (published)
-   - If FM fails here too, compare against LeRobot's built-in diffusion
-3. **Eval**: use `lerobot-eval --env.type=libero --env.task=libero_10` after training
+#### Eval Results (osmesa rendering, `--eval.n_episodes=10` per task)
+| Model | Params | All-Suite (40 tasks) | LIBERO-10 | Training Time | Steps/s | Notes |
+|-------|--------|---------------------|-----------|---------------|---------|-------|
+| **SmolVLA (ours)** | 450M (100M learnable) | **82.0%** | 51% | 4h (8×H100) | 7.0 | Paper config, bf16 |
+| SmolVLA (official HF) | 450M | — | 41% | — | — | Known reproduction gap |
+| SmolVLA (published) | 450M | 87.3% | — | — | — | Paper reference |
+| Diffusion v2 (ours) | — | training... | — | ~11h (8×H100) | ~8 | batch=256, 200k steps |
+| Diffusion v1 (ours) | — | 25.9% | — | 3.5h | 4.0 | FAILED: batch=512 too big |
+| Diffusion (published) | — | 72.4% | — | — | — | Paper reference |
+| FM (ours) | 16M | needs eval | — | 1.9h (1×H100) | 7.3 | loss=0.177, 50k steps |
+| pi0-FAST (published) | 3B | 82.5% | — | — | — | batch=32, 20k steps |
+| pi0.5 (published) | 3B | 97.5% | — | — | — | batch=32×8GPU, 6k steps |
+| X-VLA (published) | 0.9B | 98.1% | — | — | — | ~30k steps |
+| **X-VLA v10 (ours)** | 0.9B | 69.75% | 42% | 55min (8×H100) | 6.2 | Fine-tune of 2toINF/X-VLA-Pt on rel2abs-converted HuggingFaceVLA/libero (20k steps, batch 64). Per-suite: spatial 72% / object 90% / goal 75% / libero_10 42%. |
+| **X-VLA v11 (ours)** | 0.9B | 72.25% | 50% | 3h40m (8×H100) | 4.6 | V10 + paper recipe match: 60k steps (3× more), batch 128 (2× larger), data aug (ColorJitter + RandomAffine + SharpnessJitter). Per-suite: spatial 80 / object 84 / goal 75 / libero_10 50. Small +2.5 avg — libero_10 gains offset by object regression. |
+| **X-VLA v12 (ours)** | 0.9B | 84.00% | 72% | 3h40m (8×H100) | 4.6 | V11 + train on `2toINF/Libero-XVLA-format` (upstream OpenVLA-regenerated LIBERO with precomputed abs_action_6d — **eliminates 5-30 mm nearest-neighbor offset** in training targets). Per-suite: spatial 83 / object 93 / goal 88 / libero_10 72. +11.75 over V11 (including +22 on libero_10). |
+| **X-VLA v14 (ours) — v1.0 recipe** | 0.9B | 85.75% | 69% | 3h40m (8×H100) | 4.6 | V12 + **constant LR** (`--policy.scheduler_decay_lr=1e-4` = peak, via `policy.*` flag to bypass the preset-overwrite in `TrainPipelineConfig.validate()` that had silently ignored all our `--scheduler.*` / `--optimizer.*` args since V11) + `weight_decay=0.01` + `grad_clip_norm=1.0`. Per-suite: **spatial 86 / object 95 / goal 93** / libero_10 69. +1.75 over V12. Gap to paper: 12.35 pp. |
+| **X-VLA v15 (ours)** | 0.9B | 87.00% | 86% | 3h40m (8×H100) | 4.6 | V14 + libero_90 auxiliary training data via `2toINF/Libero-XVLA-format` (5525 total eps, 3.3× V14). Per-suite: **spatial 88** / object 93 / goal 81 / **libero_10 86**. +1.25 over V14 avg but **+17 on libero_10** — long-horizon tasks benefit most from libero_90's diverse scenes. Goal regressed -12 (side effect of more diverse training data diluting goal-conditioned alignment). Gap to paper: 11.1 pp. |
+| **X-VLA v16 (ours)** | 0.9B | 90.50% | 83% | 5h30m (8×H100) cumulative | 4.6 | Two-stage training: stage 1 = V15 (60k steps on libero_all_v15), stage 2 = continue from V15/060000 on V12 only (4 fine-tune suites, 30k more steps, constant LR). Per-suite: **spatial 91 / object 97 / goal 91** / libero_10 83. +3.5 over V15, +4.75 over V14. Goal fully recovered from V15's 81 → 91; libero_10 only -3 from V15's 86 despite stage 2 not seeing libero_90. Gap to paper: 7.6 pp. |
+| **X-VLA v17b (ours)** | 0.9B | **91.25%** | **90%** | 5h30m train + eval-only tweak | 4.6 | V16 checkpoint + eval-time `num_denoising_steps=20` (was 10). Per-suite: spatial 89 / object 97 / goal 89 / **libero_10 90**. +0.75 over V16 (+7 on libero_10, -2 on spatial/goal). Doubling flow-matching ODE steps helps long-horizon sequences where per-step action error compounds. **Current best.** Gap to paper: **6.85 pp**. |
 
-### Published LIBERO baselines (target numbers)
-| Model | Params | Avg Success | Config |
-|-------|--------|-------------|--------|
-| Diffusion Policy | - | 72.4% | - |
-| SmolVLA | 0.45B | 87.3% | batch=64, 100k steps |
-| pi0-FAST | 3B | 82.5% | batch=32, 20k steps |
-| pi0.5 | 3B | 97.5% | batch=32x8GPU, 6k steps |
-| X-VLA | 0.9B | 98.1% | ~30k steps |
+#### Training Speed Benchmarks (8×H100, LIBERO dataset)
+| Model | Batch/GPU | Eff. Batch | updt_s | data_s | Steps/s | Samples/s | GPU Mem | Notes |
+|-------|-----------|-----------|--------|--------|---------|-----------|---------|-------|
+| SmolVLA (no opt) | 8 | 64 | 0.503 | 0.004 | 2.0 | 128 | 6GB | No bf16, no data fix |
+| SmolVLA (bf16) | 8 | 64 | 0.163 | 0.134 | 2.0 | 128 | 6GB | bf16, data bottleneck |
+| SmolVLA (bf16+fix) | 32 | 256 | 0.212 | 0.011 | 4.4 | 1126 | 12GB | **Best: bf16+data fix** |
+| SmolVLA (bf16+fix) | 64 | 512 | 0.369 | 0.019 | 2.6 | 1311 | 22GB | Max throughput |
+| Diffusion (bf16+fix) | 32 | 256 | 0.093 | 0.035 | ~8 | ~2048 | 14GB | Currently training |
+
+#### Key Optimizations Applied
+1. **Data loading fix (12×)**: Bypass HF datasets `set_transform` for non-image columns — avoids decoding 100 throwaway PNGs per action-chunk query
+2. **bf16 mixed precision (3×)**: `--mixed_precision bf16` via accelerate
+3. **persistent_workers + prefetch_factor=4**: Eliminates worker respawn overhead
+4. **Lesson learned**: Always match published effective batch size, or scale LR proportionally (linear rule)
+
+### YAM Benchmark Results (yam_pick_up_grey_cube, v1.1)
+
+#### Replay MSE (held-out episodes 8-9) + Inference Latency (H100)
+| Model | Params | Replay MSE | Infer (compiled) | Train Time | Notes |
+|-------|--------|------------|------------------|------------|-------|
+| **FM v1** | 275M | **0.00155** | **18 ms** | 2.6h (7×H100) | Best MSE + fastest inference. 5-step Euler. |
+| **X-VLA v0** | 879M | 0.00247 | 78 ms | 2.0h (3×H100) | Best per-joint arm accuracy. 10-step flow. |
+| **DP v0** | 271M | 0.01068 | 35 ms | 2h (8×H100) | DDIM-10. Gripper prediction is the gap. |
+| **SmolVLA v0** | 450M (100M learnable) | 0.02785 | 24 ms | 1.0h (4×H100) | 10× from torch.compile (242→24ms). Gripper MSE dominates. |
+
+#### Key findings
+- **Image-format dataset is critical**: video decode bottleneck made DP take 43h; image format brings all runs to 1-3h. Use `scripts/convert_yam_video_to_image.py`.
+- **torch.compile**: 10× on SmolVLA, 1.35× on DP, 1.28× on FM. No effect on X-VLA (Florence-2 ops not compile-friendly).
+- **FM wins** on both accuracy (MSE) and speed (18ms compiled). Best choice for real-time YAM deployment.
+
+### Current Status
+- **v1.1 YAM multi-backbone pipeline**: complete (Phases 0-5). All 4 backbones trained, evaluated, serving-verified.
+- **v1.0 X-VLA LIBERO reproduction**: 91.25% avg (V17b), 6.85 pp from paper.
+- **Next**: on-robot eval, DiT caching for X-VLA inference, new datasets.
+
+### Quick start (YAM training)
+```bash
+uv run python scripts/train_yam.py fm          # Flow Matching (recommended)
+uv run python scripts/train_yam.py xvla        # X-VLA
+uv run python scripts/train_yam.py dp          # Diffusion Policy
+uv run python scripts/train_yam.py smolvla     # SmolVLA
+uv run python scripts/train_yam.py --list      # show all presets
+```
+
+### Eval notes
+- Use `MUJOCO_GL=osmesa` for LIBERO (EGL broken due to NVIDIA driver version mismatch)
+- Use `--policy.n_action_steps=10` for SmolVLA (1 gave worse results)
+- Use `--eval.batch_size=1 --eval.n_episodes=10` per task
+- YAM eval: `scripts/eval_replay.py` (replay MSE) + `scripts/test_serve_all.py` (serving)
+- Output dir on SSD: `/mnt/localssd/sunlingfeng/checkpoints/`
 
 ---
 
