@@ -341,14 +341,18 @@ class PolicyServer:
                 return connection.respond(http.HTTPStatus.OK, "OK\n")
             return None
 
+        # Bounded message ceiling sized for the largest plausible obs payload:
+        #   3 cameras × 1920×1080 RGB uint8 ≈ 18 MB (1080p native, the most common
+        #   high-res case). 32 MB headroom covers ZED dual-stream and depth+RGB
+        #   stacks. Below this is silently dropped; above it crashes the connection
+        #   instead of letting an attacker buffer arbitrary bytes (default of None
+        #   would). The 1 MB websockets default is too low for raw camera frames:
+        #   even 480×640 RGB × 3 cams ≈ 2.7 MB exceeds it.
+        max_msg_bytes = 32 * 1024 * 1024
         async with websockets.serve(
             self.handle_client, self.config.host, self.config.port,
             process_request=_health_check,
-            # Default is 1 MB, which silently rejects raw camera frames:
-            # native 480x640 uint8 × 3 cameras ≈ 2.7 MB; same-size float32 also exceeds 1 MB.
-            # Setting None matches OpenPI's WebsocketPolicyServer. Clients still resize
-            # to the policy's expected image_size when they want to save bandwidth.
-            max_size=None,
+            max_size=max_msg_bytes,
         ):
             logger.info("Server ready. Waiting for connections (/healthz available).")
             await asyncio.Future()  # run forever
