@@ -74,7 +74,16 @@ def main():
     logger.info(f"Wrote meta/tasks.jsonl ({len(tasks_df)} tasks)")
 
     # ── meta/episodes.jsonl + meta/episodes_stats.jsonl ────────────────
-    ep_df = pq.read_table(src / "meta/episodes/chunk-000/file-000.parquet").to_pandas()
+    # Scan all shards under meta/episodes/chunk-*/file-*.parquet — datasets with
+    # >chunks_size episodes (v3 default 1000) get rotated across multiple files.
+    ep_shards = sorted((src / "meta/episodes").glob("chunk-*/file-*.parquet"))
+    if not ep_shards:
+        raise FileNotFoundError(f"No meta/episodes/chunk-*/file-*.parquet under {src}")
+    import pandas as pd
+
+    ep_df = pd.concat([pq.read_table(p).to_pandas() for p in ep_shards], ignore_index=True)
+    ep_df = ep_df.sort_values("episode_index").reset_index(drop=True)
+    logger.info(f"Loaded {len(ep_df)} episodes from {len(ep_shards)} metadata shard(s)")
     n_eps = len(ep_df)
 
     feature_keys = [k for k in info["features"].keys() if k not in {"index", "frame_index", "episode_index", "task_index", "timestamp"}]
