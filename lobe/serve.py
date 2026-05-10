@@ -55,6 +55,11 @@ class ServeConfig:
     noise_scheduler_type: str | None = None  # e.g. "DDIM" for DP (default DDPM is 100 steps = 450ms)
     compile: bool = False  # Enable torch.compile for ~2× inference speedup (adds warmup latency on first call)
 
+    # Gripper binarization — threshold continuous gripper predictions to {0, max}
+    gripper_binarize: bool = False  # Enable for YAM bimanual (gripper actions are bimodal 0/2.4)
+    gripper_dims: tuple[int, ...] = ()  # Action dims to binarize, e.g. (6, 13) for YAM left/right grippers
+    gripper_threshold: float = 0.5  # Threshold in normalized [0, 1] space (after min-max to [0, max])
+
     # Inference mode
     chunk_mode: bool = True  # Return full action chunk per inference (recommended for real robots)
 
@@ -237,6 +242,15 @@ class PolicyServer:
                     actions_np = np.asarray(actions)
                 if actions_np.ndim == 1:
                     actions_np = actions_np.reshape(1, -1)
+
+                if self.config.gripper_binarize and self.config.gripper_dims:
+                    for d in self.config.gripper_dims:
+                        if d < actions_np.shape[-1]:
+                            col = actions_np[..., d]
+                            col_max = col.max() if col.max() > 0.1 else 2.4
+                            actions_np[..., d] = np.where(
+                                col > col_max * self.config.gripper_threshold, col_max, 0.0
+                            )
 
                 response = {
                     "actions": actions_np.astype(np.float32),

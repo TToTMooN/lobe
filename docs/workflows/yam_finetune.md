@@ -5,8 +5,10 @@ LOBE's YAM pipeline takes a LeRobot v3.0 dataset collected by
 (a) replay-evaluated offline and (b) deployed on the robot via
 `lobe-serve`. Reference dataset: [`ttotmoon/yam_pick_up_grey_cube`](https://huggingface.co/datasets/ttotmoon/yam_pick_up_grey_cube).
 
-Four backbones are supported (presets in `lobe/configs/yam.py`). All
-produce 14-D joint-space actions for the YAM bimanual robot.
+Three backbones are recommended (presets in `lobe/configs/yam.py`). All
+produce 14-D joint-space actions for the YAM bimanual robot. SmolVLA is
+also supported but underperforms on this dataset size — use it only if
+you need its specific architecture.
 
 ## Results (yam_pick_up_grey_cube, held-out episodes 8-9)
 
@@ -192,16 +194,22 @@ See [`serving.md`](./serving.md) for deployment and speed optimization.
 | **Fastest training** | **SmolVLA** | 1h to train, 24 ms compiled inference |
 | **No pretrained weights available** | **DP** or **FM** | Train from scratch with ImageNet encoder |
 
-Serve with speed flags for production:
+Serve with speed flags + gripper binarization for production:
 ```bash
-# Recommended: FM with compile
+# Recommended: FM with compile + gripper binarization
 lobe-serve --checkpoint=checkpoints/yam-grey-cube-fm-v1/checkpoints/050000/pretrained_model \
-    --num-inference-steps=5 --compile
+    --num-inference-steps=5 --compile \
+    --gripper-binarize --gripper-dims 6 13
 
 # X-VLA (higher accuracy, slower)
 lobe-serve --checkpoint=checkpoints/yam-grey-cube-xvla-v0/checkpoints/020000/pretrained_model \
-    --compile
+    --compile --gripper-binarize --gripper-dims 6 13
 ```
+
+`--gripper-binarize` thresholds gripper dims to {0, max} at serving time.
+All backbones predict the correct gripper direction (open/close correlation
+0.98) but MSE regression outputs blurred mid-range values. Binarization
+recovers crisp open/close commands without retraining.
 
 ## Using a different YAM dataset
 

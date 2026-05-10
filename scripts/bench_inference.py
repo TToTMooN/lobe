@@ -27,14 +27,12 @@ DEFAULT_CHECKPOINTS = {
     "dp": "checkpoints/yam-grey-cube-dp-v0/checkpoints/050000/pretrained_model",
     "fm": "checkpoints/yam-grey-cube-fm-v1/checkpoints/050000/pretrained_model",
     "xvla": "checkpoints/yam-grey-cube-xvla-v0/checkpoints/020000/pretrained_model",
-    "smolvla": "checkpoints/yam-grey-cube-smolvla-v0/checkpoints/020000/pretrained_model",
 }
 
 FAST_CONFIGS = {
     "dp": {"noise_scheduler_type": "DDIM", "num_inference_steps": 10},
     "fm": {"num_inference_steps": 5},
     "xvla": {},
-    "smolvla": {},
 }
 
 IMAGE_SHAPE = (3, 240, 320)

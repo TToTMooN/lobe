@@ -29,9 +29,8 @@ IMAGE_SHAPE = (240, 320, 3)  # HWC uint8, matching the 240x320 training resize
 
 DEFAULT_CHECKPOINTS = {
     "dp": "checkpoints/yam-grey-cube-dp-v0/checkpoints/050000/pretrained_model",
-    "fm": "checkpoints/yam-grey-cube-fm-v0/checkpoints/030000/pretrained_model",
+    "fm": "checkpoints/yam-grey-cube-fm-v1/checkpoints/050000/pretrained_model",
     "xvla": "checkpoints/yam-grey-cube-xvla-v0/checkpoints/020000/pretrained_model",
-    "smolvla": "checkpoints/yam-grey-cube-smolvla-v0/checkpoints/020000/pretrained_model",
 }
 
 # Camera name mapping per backbone (must match what the policy was trained with)
