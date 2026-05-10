@@ -53,6 +53,7 @@ class ServeConfig:
     # Inference speed — override denoising/ODE steps for faster serving
     num_inference_steps: int | None = None  # e.g. 10 for DDIM-10 (DP) or 3-5 for FM. None=use checkpoint default.
     noise_scheduler_type: str | None = None  # e.g. "DDIM" for DP (default DDPM is 100 steps = 450ms)
+    compile: bool = False  # Enable torch.compile for ~2× inference speedup (adds warmup latency on first call)
 
     # Inference mode
     chunk_mode: bool = True  # Return full action chunk per inference (recommended for real robots)
@@ -310,6 +311,9 @@ def main():
     if config.noise_scheduler_type is not None and hasattr(policy_cfg, "noise_scheduler_type"):
         policy_cfg.noise_scheduler_type = config.noise_scheduler_type
         logger.info(f"Override noise_scheduler_type={config.noise_scheduler_type}")
+    if config.compile and hasattr(policy_cfg, "compile_model"):
+        policy_cfg.compile_model = True
+        logger.info("Enabled torch.compile for inference")
 
     policy_cls = get_policy_class(policy_cfg.type)
     policy = policy_cls.from_pretrained(config.checkpoint, config=policy_cfg)
