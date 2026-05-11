@@ -213,7 +213,6 @@ class PolicyServer:
                     batch.pop("action")
                 if self.policy.config.image_features:
                     batch = dict(batch)
-                    obs_images_key = "observation.images"
                     img_keys = list(self.policy.config.image_features.keys())
                     # Catch missing-camera errors with a clear message instead of letting
                     # the model crash deep in einops/rearrange. This is the kind of
@@ -230,7 +229,16 @@ class PolicyServer:
                             f"Check that the client is sending all expected cameras "
                             f"(see metadata['expected_images'])."
                         )
-                    batch[obs_images_key] = torch.stack([batch[k] for k in img_keys], dim=-4)
+                    # Only build the unified "observation.images" tensor when the
+                    # policy's queue actually consumes it (FM / Diffusion). X-VLA
+                    # reads per-key images directly in _prepare_images and allows
+                    # heterogeneous per-camera shapes (e.g. image=256x256 + image3=224x224),
+                    # which would break torch.stack here.
+                    obs_images_key = "observation.images"
+                    if obs_images_key in self.policy._queues:
+                        batch[obs_images_key] = torch.stack(
+                            [batch[k] for k in img_keys], dim=-4
+                        )
                 self.policy._queues = populate_queues(self.policy._queues, batch)
 
             kwargs = {}
