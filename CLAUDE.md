@@ -81,10 +81,38 @@ See `.claude/projects/-home-lingfeng-playground-lobe/memory/MEMORY.md` for detai
   ⚠️ **CURRENTLY BROKEN for FM/DP** on the pinned PyTorch nightly (2.12.0.dev20260306+cu128, required for RTX 5090 sm_120). The compiled unet silently produces near-random outputs and the policy looks completely broken at inference. Reproduce: `lobe-serve --checkpoint=ttotmoon/yam-place-vial-fm-v0 --compile` → abs_max_err vs ground-truth action ≈ 1.9 (vs 0.03 without --compile). **Do NOT pass `--compile` for FM/DP serving until upstream PyTorch fixes the regression.** SmolVLA + X-VLA serving is unaffected; X-VLA didn't compile in the first place.
 - **FM wins** on both accuracy (MSE) and speed (18ms compiled). Best choice for real-time YAM deployment.
 
+### FM v2 — openpi-style mixed-delta + Q01-Q99 (`yam_8ml_vial_flow_matching_h32`)
+
+Trained on `ttotmoon/8ml_vial_place_30fps` (h=32, n_action=16, 8×H100, 50k steps, 56 min).
+Implements OpenPI semantics inside the policy: joint dims use `(action - state * mask)` against
+the chunk-start state; gripper dims stay absolute; Q01-Q99 normalization over chunked-delta stats
+(`/mnt/localssd/.../meta/delta_stats.json`); `normalization_mapping = {STATE: IDENTITY,
+ACTION: IDENTITY}` so lerobot leaves raw data alone and the model does its own math.
+
+Wire probe (30 frames of episode 0 of the training set) — comparing chunk[0] to GT action:
+
+| metric | FM v2 (this) | FM v0 (baseline) | FM v1' (broken) | pi0.5 (target) |
+|---|---|---|---|---|
+| chunk[0] joint mean abs_max err | **0.0286** | 0.053 | 0.88 | 0.013 |
+| chunk[0] gripper mean abs_max err | **0.0220** | 0.042 | 1.03 | — |
+| full-chunk mean abs_max err | 0.0819 | — | — | — |
+
+**+~2× over v0 on both joint and gripper. Remaining gap to pi0.5 is architecture + pretraining,
+not training recipe.** Checkpoint: `ttotmoon/yam-vial-place-fm-v2-h32`, `gs://physical-ai-data-us-east5/lingfeng/checkpoints/yam-vial-place-fm-v2-h32`.
+
+**Important pitfall — chunked vs single-step delta stats:** the `q01/q99` for the delta
+distribution must be computed over **every (t, i) pair where i ∈ [0, H-1]**, not just i=0.
+Multi-step deltas (i > 0) are larger than single-step deltas, so single-step stats are
+1.5–2× too narrow and put ~6% of normalized values outside [-1, 1]. See
+`scripts/compute_chunked_delta_stats.py` for the right computation (matches openpi's
+`RunningStats` which flattens (B, H, A) → (B*H, A) and treats every timestep-in-chunk as
+an independent sample).
+
 ### Current Status
 - **v1.1 YAM multi-backbone pipeline**: complete (Phases 0-5). All 4 backbones trained, evaluated, serving-verified.
+- **v1.2 FM v2 mixed-delta**: chunk[0] joint err 0.029 (vs v0's 0.053). Pushed to HF + GS.
 - **v1.0 X-VLA LIBERO reproduction**: 91.25% avg (V17b), 6.85 pp from paper.
-- **Next**: on-robot eval, DiT caching for X-VLA inference, new datasets.
+- **Next**: on-robot eval of FM v2, optionally port mixed-delta to X-VLA (new action_mode in `action_hub.py`).
 
 ### Quick start (YAM training)
 ```bash

@@ -59,9 +59,40 @@ class FlowMatchingPolicy(PreTrainedPolicy):
         # (NormalizerProcessorStep / UnnormalizerProcessorStep in processor_flow_matching.py).
         # The model receives pre-normalized data and returns pre-unnormalized outputs.
         # This matches the pattern used by lerobot's DiffusionPolicy, SmolVLA, etc.
+        #
+        # EXCEPTION: when `delta_actions=True`, the preset sets lerobot's STATE and ACTION
+        # normalization to IDENTITY and this model does its own mixed-delta + Q01-Q99
+        # normalization internally. See `delta_stats_path` in the config.
 
         self._queues = None
         self.flow_matching = FlowMatchingModel(config)
+
+        # ── load delta stats if delta_actions=True ─────────────────────────
+        # The buffers are part of state_dict, so a checkpoint always carries the right
+        # q01/q99 even if the original delta_stats_path no longer exists. We try to load
+        # from the path here; if missing, we initialize as zeros and trust from_pretrained
+        # to overwrite from state_dict.
+        if self.config.delta_actions:
+            action_dim = self.config.action_feature.shape[0] if self.config.action_feature else 14
+            q01 = torch.zeros(action_dim, dtype=torch.float32)
+            q99 = torch.ones(action_dim, dtype=torch.float32)
+            if self.config.delta_stats_path:
+                import json
+                try:
+                    with open(self.config.delta_stats_path) as f:
+                        ds = json.load(f)
+                    q01 = torch.tensor(ds["q01"], dtype=torch.float32)
+                    q99 = torch.tensor(ds["q99"], dtype=torch.float32)
+                except FileNotFoundError:
+                    # Fine — likely loading a pretrained checkpoint on a machine where the
+                    # original stats file isn't mounted. state_dict will overwrite the buffers.
+                    pass
+            mask = torch.tensor(self.config.delta_action_mask, dtype=torch.float32)  # 1=joint(delta), 0=gripper(abs)
+            # Register as buffers so they move with .to(device) and are saved with the model.
+            self.register_buffer("delta_q01", q01)
+            self.register_buffer("delta_q99", q99)
+            self.register_buffer("delta_joint_mask", mask)
+
         self.reset()
 
     def get_optim_params(self) -> dict:
@@ -81,9 +112,45 @@ class FlowMatchingPolicy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
         actions = self.flow_matching.generate_actions(batch)
-        # Unnormalization happens externally in the postprocessor pipeline.
-        # For delta_actions: raw deltas, anchor added in select_action.
+        # When delta_actions=True, the model outputs normalized mixed-delta; convert
+        # back to raw absolute action here so callers (serve.py chunk_mode, select_action)
+        # always get raw actions. Anchor = the most recent (chunk-start) observation state.
+        if self.config.delta_actions:
+            action_dim = self.config.action_feature.shape[0]
+            state_a = batch[OBS_STATE][:, -1, :action_dim]  # (B, A)
+            actions = self._normalized_to_absolute(actions, state_a)
         return actions
+
+    # ── openpi-style mixed-delta helpers ────────────────────────────────────
+    def _delta_to_normalized(self, action: Tensor, state: Tensor) -> Tensor:
+        """Convert raw (B, H, A) action and raw (B, A) state into normalized mixed-delta.
+
+        Matches OpenPI's pipeline: DeltaActions(mask=(joints=delta, gripper=absolute)) then
+        Normalize(use_quantiles=True) using delta-aware stats.
+        """
+        A = action.shape[-1]
+        mask = self.delta_joint_mask[:A]  # (A,)
+        # Subtract state from joint dims, keep gripper dims absolute.
+        action_minus_state = action - state.unsqueeze(1) * mask.view(1, 1, A)
+        # Quantile normalize to [-1, 1] using delta-aware q01/q99.
+        q01 = self.delta_q01[:A].view(1, 1, A)
+        q99 = self.delta_q99[:A].view(1, 1, A)
+        return (action_minus_state - q01) / (q99 - q01 + 1e-6) * 2.0 - 1.0
+
+    def _normalized_to_absolute(self, normalized: Tensor, state: Tensor) -> Tensor:
+        """Invert _delta_to_normalized: normalized prediction → raw absolute action.
+
+        normalized: (B, H, A) the model's prediction (mixed-delta in normalized space)
+        state:      (B, A) current observation's state (raw, since preset uses IDENTITY norm)
+        """
+        A = normalized.shape[-1]
+        mask = self.delta_joint_mask[:A]
+        q01 = self.delta_q01[:A].view(1, 1, A)
+        q99 = self.delta_q99[:A].view(1, 1, A)
+        # Unnormalize: [-1, 1] → raw mixed-delta range
+        action_minus_state = (normalized + 1.0) / 2.0 * (q99 - q01) + q01
+        # Add state back to joint dims only
+        return action_minus_state + state.unsqueeze(1) * mask.view(1, 1, A)
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -98,33 +165,32 @@ class FlowMatchingPolicy(PreTrainedPolicy):
                 if key in batch and batch[key].shape[-2:] != (h, w):
                     batch[key] = F.interpolate(batch[key], size=(h, w), mode="bilinear", align_corners=False)
 
-        # Store state for delta action anchor (data is normalized, that's fine — the anchor
-        # operates in normalized space and the postprocessor unnormalizes the result)
-        if self.config.delta_actions and OBS_STATE in batch:
-            self._raw_state = batch[OBS_STATE].clone()
-
         if self.config.image_features:
             batch = dict(batch)
             batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
         self._queues = populate_queues(self._queues, batch)
 
         if len(self._queues[ACTION]) == 0:
+            # predict_action_chunk handles delta-unnormalization internally when
+            # delta_actions=True (so serve.py chunk_mode also gets raw actions).
             actions = self.predict_action_chunk(batch)
-            if self.config.delta_actions:
-                action_dim = self.config.action_feature.shape[0]
-                anchor = self._raw_state[:, :action_dim]
-                actions = actions + anchor.unsqueeze(1)
             self._queues[ACTION].extend(actions.transpose(0, 1))
 
         action = self._queues[ACTION].popleft()
         return action
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, None]:
-        # Batch arrives pre-normalized from the preprocessor pipeline.
-        # Delta actions: convert to per-chunk deltas (subtraction is invariant under affine norm).
+        # When delta_actions=True the preset uses IDENTITY normalization for STATE and
+        # ACTION, so batch[ACTION] and batch[OBS_STATE] are raw. Compute mixed-delta
+        # (joints subtract state, gripper stays absolute) and quantile-normalize using
+        # the delta-aware stats. Matches OpenPI's DeltaActions → Normalize order.
         if self.config.delta_actions:
             batch = dict(batch)
-            batch[ACTION] = batch[ACTION] - batch[ACTION][:, 0:1, :]
+            action_dim = self.config.action_feature.shape[0]
+            # batch[OBS_STATE] has shape (B, n_obs_steps, state_dim) during training; the
+            # chunk-anchor is the MOST RECENT observation, i.e. the last step.
+            state_a = batch[OBS_STATE][:, -1, :action_dim]  # (B, action_dim)
+            batch[ACTION] = self._delta_to_normalized(batch[ACTION], state_a)
         if self.config.image_features:
             batch = dict(batch)
             batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
