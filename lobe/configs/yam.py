@@ -135,9 +135,25 @@ class YAMFlowMatchingConfig(YAMBaseConfig):
     optimizer_lr: float = 1e-4
     optimizer_weight_decay: float = 1e-6
     scheduler_warmup_steps: int = 500
+    # ── lessons-from-pi0.5 knobs (off by default to keep grey_cube preset reproducible) ──
+    # See docs/openpi_pipeline_full.md.
+    # When delta_actions=True, the policy implements OpenPI's mixed-delta semantics
+    # (joints subtract chunk-start state, gripper stays absolute) + Q01-Q99 quantile
+    # normalization internally. The lerobot processor is told to use IDENTITY for
+    # STATE/ACTION so raw values reach the model. `delta_stats_path` must point at
+    # a JSON file with q01/q99 over the delta distribution.
+    delta_actions: bool = False
+    delta_stats_path: str | None = None
+    use_amp: bool = False  # bf16 forward — ~2× faster, no accuracy hit
 
     def to_launch_args(self) -> list[str]:
-        return [
+        # When the model does its own mixed-delta + Q01-Q99 internally, lerobot must
+        # NOT pre-normalize STATE/ACTION (otherwise the anchor math is broken).
+        if self.delta_actions:
+            norm_map = '{"VISUAL": "MEAN_STD", "STATE": "IDENTITY", "ACTION": "IDENTITY"}'
+        else:
+            norm_map = '{"VISUAL": "MEAN_STD", "STATE": "MEAN_STD", "ACTION": "MEAN_STD"}'
+        args = [
             *self.base_args(),
             "--policy.type=flow_matching",
             f"--policy.horizon={self.horizon}",
@@ -151,11 +167,17 @@ class YAMFlowMatchingConfig(YAMBaseConfig):
             f"--policy.backbone={self.backbone}",
             f"--policy.down_dims=[{self.down_dims}]",
             f"--policy.num_inference_steps={self.num_inference_steps}",
+            f"--policy.delta_actions={str(self.delta_actions).lower()}",
+            f"--policy.use_amp={str(self.use_amp).lower()}",
+            f"--policy.normalization_mapping={norm_map}",
             f"--policy.optimizer_lr={self.optimizer_lr}",
             f"--policy.optimizer_weight_decay={self.optimizer_weight_decay}",
             f"--policy.scheduler_warmup_steps={self.scheduler_warmup_steps}",
             *self.hub_args(),
         ]
+        if self.delta_actions and self.delta_stats_path:
+            args.append(f"--policy.delta_stats_path={self.delta_stats_path}")
+        return args
 
 
 @dataclass
@@ -233,6 +255,12 @@ _PLACE_VIAL_REPO = "local/place_the_vial_into_the_stand_1to4_image"
 _PLACE_VIAL_ROOT = (
     "/home/sunlingfeng/.cache/huggingface/lerobot/local/place_the_vial_into_the_stand_1to4_image"
 )
+# v1: honestly resampled 30fps dataset (limb#11 — fixes silent rate mislabeling).
+# Source: ttotmoon/8ml_vial_place_30fps. See docs/lessons_pi05_vs_lobe.md.
+_VIAL_30FPS_REPO = "local/8ml_vial_place_30fps_image"
+_VIAL_30FPS_ROOT = (
+    "/home/sunlingfeng/.cache/huggingface/lerobot/local/8ml_vial_place_30fps_image"
+)
 # Checkpoints land on local SSD (root disk is too small for ~16 GB × 3 backbones).
 _PLACE_VIAL_CKPT_BASE = "/mnt/localssd/sunlingfeng/checkpoints"
 
@@ -270,5 +298,41 @@ PRESETS: dict[str, YAMBaseConfig] = {
         steps=50_000,
         save_freq=10_000,
         scheduler_decay_steps=50_000,  # decay_lr==peak means constant LR; match step total for clarity
+    ),
+    # v1 presets: trained on the resampled, honest-30fps dataset (limb#11). Same
+    # hyperparameters as v0 — first iteration just changes the dataset to isolate
+    # whether the rate-mislabel bug is the dominant gap (per lessons doc).
+    # FM v2 — openpi-style mixed-delta + Q01-Q99 (the proper fix, replaces the broken v1).
+    # horizon=32 also tests longer chunk lookahead (H3: pi0.5 uses 50 → 1.67s, v2 = 32 → 1.06s).
+    "yam_8ml_vial_flow_matching_h32": YAMFlowMatchingConfig(
+        dataset_repo_id=_VIAL_30FPS_REPO,
+        dataset_root=_VIAL_30FPS_ROOT,
+        output_dir=f"{_PLACE_VIAL_CKPT_BASE}/yam-vial-place-fm-v2-h32",
+        job_name="yam-vial-place-fm-v2-h32",
+        push_to_hub=True,
+        hub_repo_id="ttotmoon/yam-vial-place-fm-v2-h32",
+        steps=50_000,
+        save_freq=10_000,
+        # openpi-style mixed-delta + Q01-Q99 (the model does both internally; the
+        # preset forces lerobot's STATE/ACTION normalization to IDENTITY in to_launch_args).
+        delta_actions=True,
+        delta_stats_path=f"{_VIAL_30FPS_ROOT}/meta/delta_stats.json",
+        use_amp=True,
+        optimizer_lr=5e-5,
+        optimizer_weight_decay=1e-6,
+        # The horizon change
+        horizon=32,                   # 1.06s of action lookahead at 30fps
+        n_action_steps=16,            # serve first 16 of 32 — same execution-to-replan ratio
+    ),
+    "yam_8ml_vial_xvla": YAMXVLAConfig(
+        dataset_repo_id=_VIAL_30FPS_REPO,
+        dataset_root=_VIAL_30FPS_ROOT,
+        output_dir=f"{_PLACE_VIAL_CKPT_BASE}/yam-vial-place-xvla-v1",
+        job_name="yam-vial-place-xvla-v1",
+        push_to_hub=True,
+        hub_repo_id="ttotmoon/yam-vial-place-xvla-v1",
+        steps=50_000,
+        save_freq=10_000,
+        scheduler_decay_steps=50_000,
     ),
 }

@@ -30,6 +30,9 @@ PRESET_ALIASES = {
     "dp-vial": "yam_place_vial_diffusion",
     "fm-vial": "yam_place_vial_flow_matching",
     "xvla-vial": "yam_place_vial_xvla",
+    "xvla-vial-30fps": "yam_8ml_vial_xvla",
+    "fm-vial-30fps-h32": "yam_8ml_vial_flow_matching_h32",
+    "fm-v2": "yam_8ml_vial_flow_matching_h32",
 }
 
 _XVLA_RENAME = (
@@ -46,6 +49,7 @@ RENAME_MAPS = {
     "yam_grey_cube_xvla": _XVLA_RENAME,
     "yam_grey_cube_smolvla": _SMOLVLA_RENAME,
     "yam_place_vial_xvla": _XVLA_RENAME,
+    "yam_8ml_vial_xvla": _XVLA_RENAME,
 }
 
 

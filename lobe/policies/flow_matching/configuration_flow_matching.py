@@ -89,7 +89,23 @@ class FlowMatchingConfig(PreTrainedConfig):
     sigma: float = 0.0
     num_inference_steps: int = 10
     ode_solver: str = "euler"  # euler (pi0 standard, fast) | midpoint (2nd-order, more accurate)
-    delta_actions: bool = False  # predict action[t] - action[0] per chunk (better for position control)
+
+    # ── openpi-style delta actions ─────────────────────────────────────────
+    # When `delta_actions=True`, the policy treats joint dims as deltas relative to the
+    # chunk-start state, while keeping gripper dims absolute — matching OpenPI's
+    # LeRobotAlohaDataConfig (mask = make_bool_mask(6, -1, 6, -1)).
+    #
+    # Requirements when delta_actions=True:
+    # 1. lerobot's STATE and ACTION normalization should be IDENTITY in the preset, so
+    #    raw state and raw action arrive at this model. The model then does its own
+    #    mixed-delta computation and Q01-Q99 normalization.
+    # 2. `delta_stats_path` must point at a JSON file with keys {"q01","q99","mean","std",
+    #    "min","max"}, each a 14-D list. These stats describe the distribution of
+    #    (action - state) for joint dims and (action) for gripper dims, aggregated
+    #    over the training dataset.
+    delta_actions: bool = False
+    delta_stats_path: str | None = None  # absolute path to delta stats JSON; required when delta_actions=True
+    delta_action_mask: tuple[int, ...] = (1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0)  # 1=joint(delta), 0=gripper(absolute)
     use_optimal_transport: bool = False
     clip_sample: bool = False
     clip_sample_range: float = 1.0
